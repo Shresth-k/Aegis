@@ -2,6 +2,20 @@ import os
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
+def _load_env():
+    """Simple, zero-dependency .env loader."""
+    if os.path.exists(".env"):
+        with open(".env", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip()
+                    if k not in os.environ:
+                        os.environ[k] = v
+
+_load_env()
+
 class Settings(BaseModel):
     # Environment
     ENVIRONMENT: Literal["development", "staging", "production"] = Field(
@@ -16,7 +30,7 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("LLM_PROVIDER", "google")
     )
     LLM_MODEL: str = Field(
-        default_factory=lambda: os.getenv("LLM_MODEL", "gemini-2.5-flash")
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemini-flash-lite-latest")
     )
     LLM_API_KEY: Optional[str] = Field(
         default_factory=lambda: os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -34,6 +48,9 @@ class Settings(BaseModel):
     )
     OPENROUTER_API_KEY: Optional[str] = Field(
         default_factory=lambda: os.getenv("OPENROUTER_API_KEY")
+    )
+    AI_GATEWAY_API_KEY: Optional[str] = Field(
+        default_factory=lambda: os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_AI_GATEWAY_KEY")
     )
     USE_JEV_TRIAGE: bool = Field(
         default_factory=lambda: os.getenv("USE_JEV_TRIAGE", "true").lower() in ("1", "true", "yes")

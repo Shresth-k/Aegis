@@ -1,4 +1,5 @@
 import json
+import os
 from typing import List
 from aegis.core.state import TelemetryEvidence, RetrievedRunbook, DiagnosisResult
 from aegis.config import settings
@@ -16,53 +17,51 @@ class DiagnosisAgent:
         evidence: TelemetryEvidence,
         runbooks: List[RetrievedRunbook]
     ) -> DiagnosisResult:
-        # 1. Check if an external LLM (Gemini, OpenAI, etc.) is configured via LangChain
-        if settings.LLM_API_KEY and settings.LLM_PROVIDER != "mock":
+        # 1. Check if Gemini / Google GenAI is configured
+        gemini_key = os.getenv("GEMINI_API_KEY") or settings.LLM_API_KEY
+        if gemini_key and settings.LLM_PROVIDER == "google":
             try:
-                # Dynamically initialize model based on settings
-                if settings.LLM_PROVIDER == "google":
-                    from langchain_google_genai import ChatGoogleGenerativeAI
-                    llm = ChatGoogleGenerativeAI(
-                        model=settings.LLM_MODEL,
-                        google_api_key=settings.LLM_API_KEY,
-                        temperature=0.1
-                    )
-                elif settings.LLM_PROVIDER == "openai":
-                    from langchain_openai import ChatOpenAI
-                    llm = ChatOpenAI(
-                        model=settings.LLM_MODEL,
-                        openai_api_key=settings.LLM_API_KEY or settings.OPENAI_API_KEY,
-                        temperature=0.1
-                    )
-                else:
-                    llm = None
+                from google import genai
+                from google.genai import types
+                client = genai.Client(api_key=gemini_key)
 
-                if llm:
-                    structured_llm = llm.with_structured_output(DiagnosisResult)
-                    prompt = f"""
-                    You are Aegis Lead Incident Diagnosis AI. Analyze the following operational evidence and runbooks:
-                    
-                    SERVICE: {evidence.service}
-                    CURRENT VERSION: {evidence.current_version} (Previous: {evidence.previous_version})
-                    RECENT DEPLOYMENT: {evidence.recent_deployment}
-                    METRICS: {json.dumps(evidence.metrics)}
-                    ERROR LOGS: {json.dumps(evidence.error_logs)}
-                    DEPENDENCIES: {json.dumps(evidence.dependencies)}
-                    
-                    RELEVANT RUNBOOKS:
-                    {chr(10).join(f"- {rb.title}: {rb.content}" for rb in runbooks)}
-                    
-                    Determine the root cause, confidence score (0.0 to 1.0), summary of supporting evidence, recommended action, and exact action parameters.
-                    """
-                    result = await structured_llm.ainvoke(prompt)
-                    return result
+                prompt = f"""
+                You are Aegis Lead Incident Diagnosis AI. Analyze the following operational evidence and runbooks:
+                
+                SERVICE: {evidence.service}
+                CURRENT VERSION: {evidence.current_version} (Previous: {evidence.previous_version})
+                RECENT DEPLOYMENT: {evidence.recent_deployment}
+                METRICS: {json.dumps(evidence.metrics)}
+                ERROR LOGS: {json.dumps(evidence.error_logs)}
+                DEPENDENCIES: {json.dumps(evidence.dependencies)}
+                
+                RELEVANT RUNBOOKS:
+                {chr(10).join(f"- {rb.title}: {rb.content}" for rb in runbooks)}
+                
+                Return a JSON object with:
+                - root_cause (string: concise root cause description)
+                - confidence (float between 0.0 and 1.0)
+                - evidence_summary (list of strings: evidence items supporting diagnosis)
+                - recommended_action (string: e.g. 'rollback_deployment')
+                - action_parameters (object: e.g. {{"service": "{evidence.service}", "target_version": "{evidence.previous_version or '2.4.0'}"}})
+                - reasoning (string: explanation of why this action resolves the issue)
+                """
+
+                response = client.models.generate_content(
+                    model=settings.LLM_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                data = json.loads(response.text)
+                return DiagnosisResult(**data)
             except Exception as e:
                 if settings.DEBUG:
-                    print(f"[Diagnosis LLM warning] Falling back to rule-grounded reasoning: {e}")
+                    print(f"[Diagnosis Gemini warning] Falling back to grounded reasoning: {e}")
 
-        # 2. Deterministic Grounded Reasoning Fallback (Guarantees Scenario ITOPS-001 correctness)
+        # 2. Deterministic Grounded Reasoning Fallback (Safety net)
         has_db_pool_errors = any("connection pool" in log.lower() or "timeout acquiring db" in log.lower() for log in evidence.error_logs)
-        high_error_rate = evidence.metrics.get("error_rate", 0) > 0.1
 
         if evidence.recent_deployment and has_db_pool_errors:
             target = evidence.previous_version or "2.4.0"
