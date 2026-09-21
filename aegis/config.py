@@ -30,7 +30,7 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("LLM_PROVIDER", "google")
     )
     LLM_MODEL: str = Field(
-        default_factory=lambda: os.getenv("LLM_MODEL", "gemini-flash-lite-latest")
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemini-3.5-flash-lite")
     )
     LLM_API_KEY: Optional[str] = Field(
         default_factory=lambda: os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY")
