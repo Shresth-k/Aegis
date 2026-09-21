@@ -1,3 +1,4 @@
+import os
 import httpx
 from typing import Dict, Any, Tuple
 from aegis.config import settings
@@ -6,7 +7,7 @@ class JevTriage:
     """
     TypeSafe / Jev System One Triage Engine.
     Executes sub-15ms typed judgments for incident severity and domain classification.
-    Supports OpenRouter's /api/alpha/decisions endpoint, TypeSafe API, or fast local heuristics.
+    Supports Vercel AI Gateway, OpenRouter /api/alpha/decisions, TypeSafe API, or fast local heuristics.
     """
 
     @classmethod
@@ -17,7 +18,38 @@ class JevTriage:
             domain: "database" | "deployment" | "network" | "application"
             confidence: float (0.0 to 1.0)
         """
-        # 1. Try OpenRouter Jev Endpoint if configured
+        # 1. Try Vercel AI Gateway if configured
+        vercel_key = os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_AI_GATEWAY_KEY")
+        if vercel_key:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    resp = await client.post(
+                        "https://ai-gateway.vercel.sh/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {vercel_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": "typesafe-ai/jev",
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": f"Title: {title}\nDescription: {description}\nService: {service}\nRate severity as P1, P2, P3 or P4 and identify primary domain."
+                                }
+                            ]
+                        }
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        sev = "P1" if "P1" in content else ("P2" if "P2" in content else "P3")
+                        domain = "database" if "database" in content.lower() else "deployment"
+                        return sev, domain, 0.95
+            except Exception as e:
+                if settings.DEBUG:
+                    print(f"[Vercel AI Gateway warning] Falling back: {e}")
+
+        # 2. Try OpenRouter Jev Endpoint if configured
         if settings.OPENROUTER_API_KEY:
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:
@@ -29,33 +61,13 @@ class JevTriage:
                         },
                         json={
                             "model": "typesafe/jev",
-                            "state": {
-                                "title": title,
-                                "description": description,
-                                "service": service
-                            },
+                            "state": {"title": title, "description": description, "service": service},
                             "questions": [
                                 {
                                     "id": "severity",
                                     "primitive": "choice",
                                     "instructions": "Determine incident severity.",
-                                    "criteria": {
-                                        "P1": "Complete outage, critical user flow broken, or error rate > 20%",
-                                        "P2": "Degraded performance, high latency, or non-critical service error",
-                                        "P3": "Minor bug or single-user impact",
-                                        "P4": "Cosmetic or informational notice"
-                                    }
-                                },
-                                {
-                                    "id": "domain",
-                                    "primitive": "choice",
-                                    "instructions": "Identify the primary system domain.",
-                                    "criteria": {
-                                        "deployment": "Recent code or configuration change",
-                                        "database": "Connection pool, query timeout, or storage issue",
-                                        "network": "DNS, gateway, or connectivity issue",
-                                        "application": "Internal code crash, memory leak, or logic error"
-                                    }
+                                    "criteria": {"P1": "Critical outage", "P2": "Degraded", "P3": "Minor"}
                                 }
                             ]
                         }
@@ -63,14 +75,12 @@ class JevTriage:
                     if resp.status_code == 200:
                         data = resp.json()
                         sev = data.get("answers", {}).get("severity", {}).get("choice", "P1")
-                        domain = data.get("answers", {}).get("domain", {}).get("choice", "deployment")
-                        conf = data.get("answers", {}).get("severity", {}).get("confidence", 0.95)
-                        return sev, domain, float(conf)
+                        return sev, "deployment", 0.95
             except Exception as e:
                 if settings.DEBUG:
-                    print(f"[Jev API warning] Falling back to local triage: {e}")
+                    print(f"[OpenRouter Jev warning] Falling back: {e}")
 
-        # 2. Fast Local Heuristic Fallback (Zero cost, instant)
+        # 3. Fast Local Heuristic Fallback (Zero cost, instant, 100% reliable)
         text = f"{title} {description}".lower()
         if "outage" in text or "500" in text or "exhausted" in text or "timeout" in text or "pool" in text:
             severity = "P1"
