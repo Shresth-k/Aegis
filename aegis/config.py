@@ -1,0 +1,63 @@
+import os
+from typing import Optional, Literal
+from pydantic import BaseModel, Field
+
+class Settings(BaseModel):
+    # Environment
+    ENVIRONMENT: Literal["development", "staging", "production"] = Field(
+        default_factory=lambda: os.getenv("ENVIRONMENT", "development")
+    )
+    DEBUG: bool = Field(
+        default_factory=lambda: os.getenv("DEBUG", "true").lower() in ("1", "true", "yes")
+    )
+
+    # Main AI Model Provider
+    LLM_PROVIDER: Literal["google", "openai", "anthropic", "mock"] = Field(
+        default_factory=lambda: os.getenv("LLM_PROVIDER", "google")
+    )
+    LLM_MODEL: str = Field(
+        default_factory=lambda: os.getenv("LLM_MODEL", "gemini-2.5-flash")
+    )
+    LLM_API_KEY: Optional[str] = Field(
+        default_factory=lambda: os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY")
+    )
+    OPENAI_API_KEY: Optional[str] = Field(
+        default_factory=lambda: os.getenv("OPENAI_API_KEY")
+    )
+    ANTHROPIC_API_KEY: Optional[str] = Field(
+        default_factory=lambda: os.getenv("ANTHROPIC_API_KEY")
+    )
+
+    # TypeSafe / Jev Settings
+    TYPESAFE_API_KEY: Optional[str] = Field(
+        default_factory=lambda: os.getenv("TYPESAFE_API_KEY")
+    )
+    OPENROUTER_API_KEY: Optional[str] = Field(
+        default_factory=lambda: os.getenv("OPENROUTER_API_KEY")
+    )
+    USE_JEV_TRIAGE: bool = Field(
+        default_factory=lambda: os.getenv("USE_JEV_TRIAGE", "true").lower() in ("1", "true", "yes")
+    )
+    USE_JEV_RERANKER: bool = Field(
+        default_factory=lambda: os.getenv("USE_JEV_RERANKER", "true").lower() in ("1", "true", "yes")
+    )
+
+    # Needle 3 Local Settings
+    ENABLE_NEEDLE3_LOCAL: bool = Field(
+        default_factory=lambda: os.getenv("ENABLE_NEEDLE3_LOCAL", "false").lower() in ("1", "true", "yes")
+    )
+
+    # AcmeCloud Simulated Enterprise Connectivity
+    ACME_CLOUD_API_URL: str = Field(
+        default_factory=lambda: os.getenv("ACME_CLOUD_API_URL", "http://localhost:8000/acme")
+    )
+    MOCK_ACME_CLOUD: bool = Field(
+        default_factory=lambda: os.getenv("MOCK_ACME_CLOUD", "true").lower() in ("1", "true", "yes")
+    )
+
+    # Tracing
+    TRACE_LOG_PATH: str = Field(
+        default_factory=lambda: os.getenv("TRACE_LOG_PATH", "traces.jsonl")
+    )
+
+settings = Settings()
