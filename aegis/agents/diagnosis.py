@@ -6,7 +6,7 @@ from aegis.config import settings
 
 class DiagnosisAgent:
     """
-    Main AI Diagnosis Agent.
+    Main AI Diagnosis Agent with Native Chain-of-Thought (CoT) Thinking.
     Synthesizes operational telemetry evidence and retrieved runbooks
     to determine likely root cause and propose remediation.
     """
@@ -26,7 +26,12 @@ class DiagnosisAgent:
                 client = genai.Client(api_key=gemini_key)
 
                 prompt = f"""
-                You are Aegis Lead Incident Diagnosis AI. Analyze the following operational evidence and runbooks:
+                You are Aegis Lead Incident Diagnosis AI.
+                Think step-by-step through the operational evidence, temporal correlations, and runbooks:
+                1. What recent changes occurred (deployments, config)?
+                2. What do the error logs and metrics indicate about resource saturation or failure modes?
+                3. Which runbook directly matches the observed failure symptoms?
+                4. What is the safest, most effective remediation action?
                 
                 SERVICE: {evidence.service}
                 CURRENT VERSION: {evidence.current_version} (Previous: {evidence.previous_version})
@@ -44,21 +49,27 @@ class DiagnosisAgent:
                 - evidence_summary (list of strings: evidence items supporting diagnosis)
                 - recommended_action (string: e.g. 'rollback_deployment')
                 - action_parameters (object: e.g. {{"service": "{evidence.service}", "target_version": "{evidence.previous_version or '2.4.0'}"}})
-                - reasoning (string: explanation of why this action resolves the issue)
+                - reasoning (string: step-by-step explanation of why this action resolves the issue)
                 """
+
+                # Use native Gemini thinking_level for deep Chain-of-Thought
+                config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level="low"
+                    )
+                )
 
                 response = client.models.generate_content(
                     model=settings.LLM_MODEL,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json"
-                    )
+                    config=config
                 )
                 data = json.loads(response.text)
                 return DiagnosisResult(**data)
             except Exception as e:
                 if settings.DEBUG:
-                    print(f"[Diagnosis Gemini warning] Falling back to grounded reasoning: {e}")
+                    print(f"[Diagnosis Gemini CoT warning] Falling back: {e}")
 
         # 2. Deterministic Grounded Reasoning Fallback (Safety net)
         has_db_pool_errors = any("connection pool" in log.lower() or "timeout acquiring db" in log.lower() for log in evidence.error_logs)
