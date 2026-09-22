@@ -8,8 +8,8 @@ from aegis.config import settings
 class JevReranker:
     """
     Intelligent Reranking Engine.
-    Tier 1: Vercel AI Gateway (typesafe-ai/jev).
-    Tier 2: Main AI LLM (Gemini / OpenAI) semantic scoring.
+    Tier 1: Live Vercel AI Gateway (typesafe-ai/jev) via /v1/evaluate.
+    Tier 2: Main AI LLM (Gemini 3.5 Flash-Lite) semantic scoring.
     Tier 3: Local heuristic (safety net).
     """
 
@@ -18,36 +18,48 @@ class JevReranker:
         if not documents:
             return []
 
-        # --- Tier 1: Vercel AI Gateway (Jev) ---
+        # --- Tier 1: Live Vercel AI Gateway (typesafe-ai/jev) ---
         vercel_key = os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_AI_GATEWAY_KEY")
         if vercel_key:
             try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
+                questions = {}
+                for d in documents:
+                    questions[f"relevance_{d.doc_id}"] = {
+                        "type": "boolean",
+                        "instructions": f"Does the document titled '{d.title}' describe the resolution or runbook for these symptoms: '{incident_symptoms}'?"
+                    }
+
+                async with httpx.AsyncClient(timeout=5.0) as client:
                     resp = await client.post(
-                        "https://ai-gateway.vercel.sh/v1/chat/completions",
+                        "https://ai-gateway.vercel.sh/v1/evaluate",
                         headers={
                             "Authorization": f"Bearer {vercel_key}",
                             "Content-Type": "application/json"
                         },
                         json={
                             "model": "typesafe-ai/jev",
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": f"Symptoms: {incident_symptoms}\nDocuments: {[d.title for d in documents]}\nRank documents by relevance."
-                                }
-                            ]
+                            "state": {
+                                "symptoms": incident_symptoms,
+                                "documents": [{"doc_id": d.doc_id, "title": d.title} for d in documents]
+                            },
+                            "questions": questions
                         }
                     )
                     if resp.status_code == 200:
-                        # Vercel Jev response parsed here
-                        pass
+                        answers = resp.json().get("answers", {})
+                        for d in documents:
+                            ans = answers.get(f"relevance_{d.doc_id}", {})
+                            # Boolean primitive returns probability of true
+                            prob = ans.get("probability", ans.get("probabilities", {}).get("true", 0.5))
+                            d.score = float(prob)
+                        documents.sort(key=lambda x: x.score, reverse=True)
+                        return documents
             except Exception as e:
                 if settings.DEBUG:
-                    print(f"[Vercel Reranker] Fallback to Tier 2: {e}")
+                    print(f"[Vercel Jev Reranker error] Falling back to Tier 2: {e}")
 
-        # --- Tier 2: Main AI LLM Intelligent Scoring (Gemini / OpenAI) ---
-        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")
+        # --- Tier 2: Main AI LLM Intelligent Scoring (Gemini 3.5 Flash-Lite) ---
+        gemini_key = os.getenv("GEMINI_API_KEY") or settings.LLM_API_KEY
         if gemini_key:
             try:
                 from google import genai

@@ -7,9 +7,9 @@ from aegis.config import settings
 class JevTriage:
     """
     Intelligent Triage Engine.
-    Tier 1: Vercel AI Gateway (typesafe-ai/jev).
-    Tier 2: Main AI LLM (Gemini / OpenAI) with structured JSON reasoning for genuine intelligence.
-    Tier 3: Local heuristic (last-resort crash-prevention safety net).
+    Tier 1: Live Vercel AI Gateway (typesafe-ai/jev) via /v1/evaluate.
+    Tier 2: Main AI LLM (Gemini 3.5 Flash-Lite) with structured JSON reasoning.
+    Tier 3: Local heuristic (last-resort safety net).
     """
 
     @classmethod
@@ -20,42 +20,63 @@ class JevTriage:
             domain: "database" | "deployment" | "network" | "application"
             confidence: float (0.0 to 1.0)
         """
-        # --- Tier 1: Vercel AI Gateway (Jev) ---
+        # --- Tier 1: Vercel AI Gateway (typesafe-ai/jev) ---
         vercel_key = os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_AI_GATEWAY_KEY")
         if vercel_key:
             try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
+                async with httpx.AsyncClient(timeout=5.0) as client:
                     resp = await client.post(
-                        "https://ai-gateway.vercel.sh/v1/chat/completions",
+                        "https://ai-gateway.vercel.sh/v1/evaluate",
                         headers={
                             "Authorization": f"Bearer {vercel_key}",
                             "Content-Type": "application/json"
                         },
                         json={
                             "model": "typesafe-ai/jev",
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": f"Title: {title}\nDescription: {description}\nService: {service}\nRate severity as P1, P2, P3 or P4 and identify primary domain."
+                            "state": {
+                                "title": title,
+                                "description": description,
+                                "service": service
+                            },
+                            "questions": {
+                                "severity": {
+                                    "type": "choice",
+                                    "instructions": "Determine incident severity level.",
+                                    "criteria": {
+                                        "P1": "Critical outage, service completely unavailable, or elevated 5xx errors",
+                                        "P2": "Degraded performance, high latency, or intermittent errors",
+                                        "P3": "Minor issue or non-critical background error",
+                                        "P4": "Informational or cosmetic notice"
+                                    }
+                                },
+                                "domain": {
+                                    "type": "choice",
+                                    "instructions": "Identify the primary failing domain.",
+                                    "criteria": {
+                                        "deployment": "Recent software release, rollback, or version change",
+                                        "database": "Connection pool exhaustion, slow queries, or DB timeouts",
+                                        "network": "DNS failure, packet loss, or gateway timeouts",
+                                        "application": "Unhandled code exception, memory leak, or crash"
+                                    }
                                 }
-                            ]
+                            }
                         }
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        sev = "P1" if "P1" in content else ("P2" if "P2" in content else "P3")
-                        domain = "database" if "database" in content.lower() else "deployment"
-                        return sev, domain, 0.95
+                        answers = data.get("answers", {})
+                        sev = answers.get("severity", {}).get("choice", "P1")
+                        domain = answers.get("domain", {}).get("choice", "deployment")
+                        conf = float(answers.get("severity", {}).get("confidence", 0.90))
+                        return sev, domain, conf
             except Exception as e:
                 if settings.DEBUG:
-                    print(f"[Vercel AI Gateway] Fallback to Tier 2: {e}")
+                    print(f"[Vercel Jev Triage error] Falling back to Tier 2: {e}")
 
-        # --- Tier 2: Main AI LLM Intelligent Triage (Gemini / OpenAI) ---
-        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")
+        # --- Tier 2: Main AI LLM Intelligent Triage (Gemini 3.5 Flash-Lite) ---
+        gemini_key = os.getenv("GEMINI_API_KEY") or settings.LLM_API_KEY
         if gemini_key:
             try:
-                # Use Google GenAI SDK if available
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=gemini_key)
