@@ -78,7 +78,13 @@ class DiagnosisAgent:
                     print(f"[Diagnosis Gemini CoT warning] Falling back: {e}")
 
         # 2. Deterministic Grounded Reasoning Fallback (Safety net)
-        has_db_pool_errors = any("connection pool" in log.lower() or "timeout acquiring db" in log.lower() for log in evidence.error_logs)
+        has_db_pool_errors = (
+            any(
+                any(k in log.lower() for k in ["connection pool", "timeout acquiring db", "queuepool", "psycopg2", "pool limit", "remaining connection slots", "exhaustion", "500"])
+                for log in evidence.error_logs
+            )
+            or (evidence.metrics.get("db_pool_active", 0) >= evidence.metrics.get("db_pool_max", 5) and evidence.metrics.get("error_rate", 0) > 0.05)
+        )
 
         if evidence.recent_deployment and has_db_pool_errors:
             target = evidence.previous_version or "2.4.0"

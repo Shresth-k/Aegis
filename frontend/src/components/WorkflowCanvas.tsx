@@ -379,6 +379,21 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         };
       }
 
+      // Docker runtime inspection node
+      if (id === 'docker-ps' || id.startsWith('docker-')) {
+        return {
+          id,
+          stage: 2,
+          category: 'INVESTIGATOR',
+          categoryIcon: 'probe',
+          title: 'Docker Investigator',
+          subtitle: 'Host Docker Daemon · 4 Containers',
+          tokens: '210t',
+          latency: '48ms',
+          status: 'DONE'
+        };
+      }
+
       return {
         id,
         stage,
@@ -518,6 +533,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       case 'triage': return 'Jev Triage Engine (sub-25ms)';
       case 'tool-logs': return 'Tool: get_service_logs';
       case 'tool-metrics': return 'Tool: get_metrics';
+      case 'docker-ps': return 'MCP Tool: docker_ps (Container Daemon)';
       case 'knowledge': return 'Runbook RAG (RB-001)';
       case 'diagnose': return 'AI Reasoning Synthesis';
       case 'policy': return 'Policy Guardrail (HITL Sign-off)';

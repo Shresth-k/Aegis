@@ -30,6 +30,9 @@ def test_chaos_endpoints():
     assert resp_reset.json()["status"] == "RESET"
 
 def test_run_incident_and_approval_flow():
+    # 0. Ensure degraded state for investigation
+    client.post("/api/chaos/inject?service=checkout-service&version=2.4.1")
+
     # 1. Run incident investigation
     resp = client.post("/api/incidents/run", json={
         "incident_id": "TEST-API-001",

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import time
+import httpx
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from fastapi import FastAPI, HTTPException, Request
@@ -465,6 +466,49 @@ async def tool_verify_slo(service: str, state: Optional[IncidentState] = None, i
     }, ["verify"]
 
 
+async def tool_docker_ps(all_containers: bool = False) -> Tuple[Dict[str, Any], List[str]]:
+    """List containers on host Docker daemon."""
+    t0 = time.perf_counter()
+    from aegis.mcp.server import docker_ps
+    containers = await docker_ps(all_containers=all_containers)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+    return {
+        "status": "SUCCESS",
+        "container_count": len(containers),
+        "containers": containers,
+        "latency_ms": elapsed_ms,
+        "source": "Host Docker Daemon (docker ps)"
+    }, ["docker-ps"]
+
+
+async def tool_docker_logs(container_name: str = "acmecloud-checkout", tail: int = 50) -> Tuple[Dict[str, Any], List[str]]:
+    """Retrieve stdout/stderr logs directly from a Docker container."""
+    t0 = time.perf_counter()
+    from aegis.mcp.server import docker_logs
+    lines = await docker_logs(container_name=container_name, tail=tail)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+    return {
+        "status": "SUCCESS",
+        "container": container_name,
+        "line_count": len(lines),
+        "logs": lines[-25:] if lines else [],
+        "latency_ms": elapsed_ms,
+        "source": f"Docker Daemon Logs ({container_name})"
+    }, ["tool-logs"]
+
+
+async def tool_docker_restart_container(container_name: str) -> Tuple[Dict[str, Any], List[str]]:
+    """Restart a container via the Docker daemon."""
+    t0 = time.perf_counter()
+    from aegis.mcp.server import docker_restart_container
+    res = await docker_restart_container(container_name=container_name)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+    return {
+        **res,
+        "latency_ms": elapsed_ms,
+    }, ["remediate"]
+
+
 async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
     """
     Core async generator powering both SSE streaming (/api/chat/stream)
@@ -544,9 +588,9 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
 
         reply = (
             f"**Remediation Executed & Verified Successfully:**\n\n"
-            f"• **Action**: `rollback_deployment` to `v2.4.0` on `{service_name}`\n"
-            f"• **Status**: `SUCCESS` — Replaced faulty container `v2.4.1` with stable baseline `v2.4.0`.\n"
-            f"• **SLO Verification**: Nominal health restored. Error rate dropped to `{res_verify.get('error_rate', 0.002):.2%}` (< 1%) and P95 latency is `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n\n"
+            f"- **Action**: `rollback_deployment` to `v2.4.0` on `{service_name}`\n"
+            f"- **Status**: `SUCCESS` — Replaced faulty container `v2.4.1` with stable baseline `v2.4.0`.\n"
+            f"- **SLO Verification**: Nominal health restored. Error rate dropped to `{res_verify.get('error_rate', 0.002):.2%}` (< 1%) and P95 latency is `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n\n"
             f"Incident **{req.incident_id}** is now **RESOLVED**."
         )
         async for chunk in emit_text(reply):
@@ -686,6 +730,57 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
         })
         return
 
+    # 2.6 Docker runtime inquiries (e.g. "docker stuff", "can you execute docker", "list containers", "docker ps", "docker logs")
+    if any(k in msg for k in ["docker", "container", "containers", "docker ps", "docker logs", "docker stuff"]) and not any(k in msg for k in ["diagnose", "auto-heal", "full investigation", "heal", "remediate"]):
+        yield ("thinking", {"thinking": "Querying host Docker daemon for live container inventory and telemetry via MCP Docker runtime tools..."})
+        yield ("tool_start", {"name": "docker_ps", "args": {"all_containers": False}})
+        res_docker, nodes_d = await tool_docker_ps(all_containers=False)
+        spawned_nodes.extend(nodes_d)
+        tool_calls_executed.append({
+            "name": "docker_ps",
+            "args": {"all_containers": False},
+            "output": res_docker
+        })
+        yield ("tool_result", {"name": "docker_ps", "output": res_docker, "node": "docker-ps"})
+        yield ("node_spawned", {"node_id": "docker-ps"})
+
+        containers = res_docker.get("containers", [])
+        c_lines = []
+        for c in containers:
+            c_name = c.get("name") or c.get("Names") or "unknown"
+            c_img = c.get("image") or c.get("Image") or "unknown"
+            c_stat = c.get("status") or c.get("Status") or "unknown"
+            c_ports = c.get("ports") or c.get("Ports") or "none"
+            c_lines.append(f"- **`{c_name}`** (`{c_img}`): Status `{c_stat}` | Ports `{c_ports}`")
+
+        c_summary = "\n".join(c_lines) if c_lines else "No running containers found on local Docker daemon."
+
+        reply = (
+            f"**Host Docker Daemon Status & Container Inventory:**\n\n"
+            f"Aegis is integrated with the host Docker daemon via live MCP runtime tools (`docker_ps`, `docker_logs`, `docker_restart_container`).\n\n"
+            f"**Active Containers ({res_docker.get('container_count', 0)}):**\n"
+            f"{c_summary}\n\n"
+            f"Operational capabilities:\n"
+            f"- `docker_ps()`: Container inventory, status, and port mapping.\n"
+            f"- `docker_logs(container_name)`: Container stdout/stderr inspection.\n"
+            f"- `docker_restart_container(container_name)`: Direct daemon container lifecycle management."
+        )
+
+        async for chunk in emit_text(reply):
+            yield chunk
+
+        yield ("done", {
+            "reply": reply,
+            "thinking": f"Retrieved live container inventory ({res_docker.get('container_count', 0)} active containers) directly from host Docker daemon.",
+            "tool_call": tool_calls_executed[0],
+            "tool_calls": tool_calls_executed,
+            "new_nodes": list(dict.fromkeys(spawned_nodes)),
+            "policy_gate": None,
+            "status": state.status if state else "OPEN",
+            "duration_seconds": round(time.perf_counter() - t0_req, 2)
+        })
+        return
+
     # 3. Gemini 3.5 Flash-Lite with Real Function Calling & Autonomous Tool Execution
     gemini_key = os.getenv("GEMINI_API_KEY") or settings.LLM_API_KEY
     if gemini_key and settings.LLM_PROVIDER == "google":
@@ -783,6 +878,42 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 ),
             )
 
+            docker_ps_decl = types.FunctionDeclaration(
+                name="docker_ps",
+                description="List running containers on the host Docker daemon, returning IDs, names, images, status, and port bindings.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "all_containers": types.Schema(type=types.Type.BOOLEAN, description="Whether to include stopped containers. Default false."),
+                    },
+                ),
+            )
+
+            docker_logs_decl = types.FunctionDeclaration(
+                name="docker_logs",
+                description="Retrieve stdout/stderr logs directly from a Docker container.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "container_name": types.Schema(type=types.Type.STRING, description="Target container name, e.g. acmecloud-checkout"),
+                        "tail": types.Schema(type=types.Type.INTEGER, description="Number of recent log lines to retrieve (default 50)"),
+                    },
+                    required=["container_name"],
+                ),
+            )
+
+            docker_restart_decl = types.FunctionDeclaration(
+                name="docker_restart_container",
+                description="Restart a Docker container on the host daemon.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "container_name": types.Schema(type=types.Type.STRING, description="Target container name, e.g. acmecloud-checkout"),
+                    },
+                    required=["container_name"],
+                ),
+            )
+
             gemini_tool = types.Tool(function_declarations=[
                 triage_decl,
                 metrics_decl,
@@ -791,20 +922,27 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 policy_decl,
                 rollback_decl,
                 verify_decl,
+                docker_ps_decl,
+                docker_logs_decl,
+                docker_restart_decl,
             ])
 
             system_prompt = (
                 "You are Aegis, an autonomous agentic IT operations and site reliability engineering system.\n"
                 "You investigate production incidents, query telemetry, search runbooks, diagnose root causes, and propose remediation.\n"
                 "CRITICAL FORMATTING INSTRUCTION: Do NOT use any emojis in your response under any circumstances. Keep the tone professional, concise, and structured with clean markdown headers and bullet points.\n"
-                "You have access to 7 real platform tools:\n"
+                "You have access to 10 real platform and runtime tools:\n"
                 "- triage_incident(incident_id, service): triage severity and domain\n"
                 "- get_metrics(service): check Prometheus metrics (error rate, latency, DB connections)\n"
                 "- get_service_logs(service): check container error logs\n"
                 "- search_runbooks(query, service): search runbooks with semantic reranker\n"
                 "- evaluate_policy(action, target_service): check policy guardrails before executing remediation\n"
                 "- rollback_deployment(service, target_version): revert deployment to stable baseline\n"
-                "- verify_slo(service): verify service health post-remediation\n\n"
+                "- verify_slo(service): verify service health post-remediation\n"
+                "- docker_ps(all_containers): query live containers on host Docker daemon\n"
+                "- docker_logs(container_name, tail): inspect container stdout/stderr logs\n"
+                "- docker_restart_container(container_name): restart container via Docker daemon\n\n"
+                "When the operator asks about Docker, running containers, or 'docker stuff', DO NOT REFUSE. You have full authorized access to Docker daemon inspection tools. Immediately call docker_ps() to list containers, or docker_logs() to retrieve logs, and present the container IDs, image names, ports, and status.\n"
                 "When investigating an incident (e.g. user says 'start', 'investigate', 'what is wrong', 'diagnose', or asks for status), autonomously call the tools to inspect triage, metrics, logs, runbooks, and evaluate policy.\n"
                 "When answering queries about metrics, provide Live Telemetry and Error Rate.\n"
                 "When answering queries about policy, explain the Policy guardrail.\n"
@@ -929,6 +1067,19 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                                 fargs.get("service", service_name),
                                 state,
                                 req.incident_id
+                            )
+                        elif fname == "docker_ps":
+                            fres, fnodes = await tool_docker_ps(
+                                all_containers=fargs.get("all_containers", False)
+                            )
+                        elif fname == "docker_logs":
+                            fres, fnodes = await tool_docker_logs(
+                                container_name=fargs.get("container_name", "acmecloud-checkout"),
+                                tail=fargs.get("tail", 50)
+                            )
+                        elif fname == "docker_restart_container":
+                            fres, fnodes = await tool_docker_restart_container(
+                                container_name=fargs.get("container_name", "acmecloud-checkout")
                             )
                         else:
                             fres = {"error": f"Unknown tool {fname}"}
@@ -1444,6 +1595,40 @@ async def get_service_metrics(service: str, window: str = "15m"):
     return await acme_client.get_metrics(service=service, window=window)
 
 
+# --- Real-Time Background Traffic Generator for Chaos Emulation ---
+_traffic_task: Optional[asyncio.Task] = None
+_traffic_running: bool = False
+
+async def _continuous_traffic_worker(base_url: str = "http://localhost:8001"):
+    global _traffic_running
+    _traffic_running = True
+    print("[Chaos Traffic] Worker started.", flush=True)
+    await asyncio.sleep(1.0)
+    limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
+    async with httpx.AsyncClient(timeout=10.0, limits=limits) as client:
+        while _traffic_running:
+            tasks = [
+                client.post(
+                    f"{base_url}/checkout",
+                    json={
+                        "customer_id": "00000000-0000-0000-0000-000000000001",
+                        "total_amount": 99.99,
+                        "currency": "USD"
+                    }
+                )
+                for _ in range(12)
+            ]
+            try:
+                res = await asyncio.gather(*tasks, return_exceptions=True)
+                errs = sum(1 for r in res if getattr(r, "status_code", 0) >= 500)
+                oks = sum(1 for r in res if getattr(r, "status_code", 0) == 201)
+                print(f"[Chaos Traffic] Burst completed: {oks} ok, {errs} errors (5xx)", flush=True)
+            except Exception as e:
+                print(f"[Chaos Traffic error] {e}", flush=True)
+            await asyncio.sleep(2.0)
+    print("[Chaos Traffic] Worker stopped.", flush=True)
+
+
 @app.post("/api/chaos/inject")
 async def inject_chaos(service: str = "checkout-service", version: str = "2.4.1"):
     """Inject faulty deployment (v2.4.1 with DB connection pool exhaustion)."""
@@ -1453,6 +1638,22 @@ async def inject_chaos(service: str = "checkout-service", version: str = "2.4.1"
         "version": version,
         "fault": "DB connection pool limited to 5"
     })
+
+    # Start continuous live traffic so Prometheus and Grafana immediately spike
+    global _traffic_task, _traffic_running
+    if _traffic_task and not _traffic_task.done():
+        _traffic_running = False
+        _traffic_task.cancel()
+    _traffic_running = True
+    _traffic_task = asyncio.create_task(_continuous_traffic_worker())
+    
+    def _task_done_cb(t):
+        if t.cancelled():
+            print("[Chaos Traffic] Task was cancelled.", flush=True)
+        elif t.exception():
+            print(f"[Chaos Traffic] Task failed with: {t.exception()}", flush=True)
+    _traffic_task.add_done_callback(_task_done_cb)
+
     # Reset any existing incident state in memory so it can be re-run cleanly
     for inc_id, state in list(INCIDENTS.items()):
         if state.service == service:
@@ -1482,7 +1683,7 @@ async def inject_chaos(service: str = "checkout-service", version: str = "2.4.1"
         "status": "INJECTED",
         "service": service,
         "version": version,
-        "message": f"Injected faulty deployment {version} for {service}."
+        "message": f"Injected faulty deployment {version} for {service} with active live traffic generation."
     }
 
 
@@ -1495,6 +1696,25 @@ async def reset_chaos(service: str = "checkout-service"):
         "version": "2.4.0",
         "health": "RESTORED"
     })
+
+    # Stop continuous traffic loop
+    global _traffic_task, _traffic_running
+    _traffic_running = False
+    if _traffic_task and not _traffic_task.done():
+        _traffic_task.cancel()
+        _traffic_task = None
+
+    # Send 4 healthy requests to immediately register nominal SLOs in Prometheus
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            for _ in range(4):
+                await client.post("http://localhost:8001/checkout", json={
+                    "customer_id": "00000000-0000-0000-0000-000000000001",
+                    "total_amount": 49.99,
+                    "currency": "USD"
+                })
+    except Exception:
+        pass
 
     # Update in-memory state
     for inc_id, state in list(INCIDENTS.items()):

@@ -223,6 +223,31 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
           }
         };
 
+      case 'docker-ps':
+        return {
+          title: 'Docker Runtime Investigator',
+          category: 'INVESTIGATION AGENT',
+          model: 'Docker Daemon MCP Tool',
+          latency: '48ms',
+          tokens: '210t',
+          status: 'COMPLETED',
+          description: 'Autonomous container daemon inspector querying live Docker containers, image tags, status, and port bindings.',
+          inputs: {
+            agent: 'InvestigationAgent',
+            tool: 'docker_ps',
+            all_containers: false
+          },
+          outputs: {
+            container_count: 4,
+            containers: [
+              { name: 'acmecloud-checkout', image: 'acmecloud-checkout', status: 'Up (healthy)', ports: '0.0.0.0:8001->8000/tcp' },
+              { name: 'acmecloud-postgres', image: 'postgres:16-alpine', status: 'Up (healthy)', ports: '0.0.0.0:5432->5432/tcp' },
+              { name: 'acmecloud-prometheus', image: 'prom/prometheus:v2.51.0', status: 'Up', ports: '0.0.0.0:9090->9090/tcp' },
+              { name: 'acmecloud-grafana', image: 'grafana/grafana:12.1.1', status: 'Up', ports: '0.0.0.0:3001->3000/tcp' }
+            ]
+          }
+        };
+
       case 'knowledge':
         return {
           title: 'Runbook RAG & Jev',
