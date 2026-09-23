@@ -80,15 +80,16 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
       const jitterLatency = (42.0 + parseInt(instanceNum, 10) * 4.2).toFixed(1);
 
       return {
-        title: `get_metrics [Worker ${instanceNum}]`,
-        category: 'PARALLEL PROBE',
-        model: `AcmeCloud Prometheus MCP (Worker ${instanceNum})`,
+        title: `Investigator Worker ${instanceNum}`,
+        category: 'INVESTIGATION AGENT',
+        model: `Investigation Agent · Prometheus MCP (Worker ${instanceNum})`,
         latency: `${jitterLatency}ms`,
         tokens: '280t',
         status: 'COMPLETED',
-        description: `Parallel asynchronous probe #${instanceNum} monitoring error rate and connection saturation under load.`,
+        description: `Autonomous Investigation Agent parallel probe #${instanceNum} monitoring error rate and connection saturation under load.`,
         inputs: {
-          tool_name: 'get_metrics',
+          agent: 'InvestigationAgent',
+          tool: 'get_metrics',
           service,
           worker_id: `async-worker-${instanceNum}`,
           concurrency: 25,
@@ -109,13 +110,13 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
       const parts = nodeId.split('-');
       const instanceNum = parts[parts.length - 1] || '1';
       return {
-        title: `get_service_logs [Worker ${instanceNum}]`,
-        category: 'PARALLEL LOGS',
-        model: `AcmeCloud FastMCP (Worker ${instanceNum})`,
+        title: `Log Investigator ${instanceNum}`,
+        category: 'INVESTIGATION AGENT',
+        model: `Investigation Agent · AcmeCloud FastMCP (Partition ${instanceNum})`,
         latency: '62ms',
         tokens: '310t',
         status: 'COMPLETED',
-        description: `Parallel log collector partition #${instanceNum} querying recent container exceptions.`,
+        description: `Autonomous Investigation Agent log partition #${instanceNum} querying recent container exceptions.`,
         inputs: {
           tool_name: 'get_service_logs',
           service,
@@ -176,14 +177,16 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
 
       case 'tool-logs':
         return {
-          title: 'Tool: get_service_logs',
-          category: 'TOOL',
-          model: 'AcmeCloud FastMCP Server',
+          title: 'Investigator: Logs & Traces',
+          category: 'INVESTIGATION AGENT',
+          model: 'Investigation Agent · AcmeCloud FastMCP',
           latency: '65ms',
           tokens: '310t',
           status: 'COMPLETED',
-          description: 'Collected recent 5xx stack traces and container database connection errors.',
+          description: 'Autonomous Investigation Agent probing recent 5xx stack traces and container database connection errors via FastMCP.',
           inputs: {
+            agent: 'InvestigationAgent',
+            tool: 'get_service_logs',
             service,
             limit: 100,
             level: 'ERROR'
@@ -199,14 +202,16 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
 
       case 'tool-metrics':
         return {
-          title: 'Tool: get_metrics',
-          category: 'TOOL',
-          model: 'AcmeCloud Prometheus MCP',
+          title: 'Investigator: Telemetry & Metrics',
+          category: 'INVESTIGATION AGENT',
+          model: 'Investigation Agent · Prometheus MCP',
           latency: '54ms',
           tokens: '290t',
           status: 'COMPLETED',
-          description: 'Queried Prometheus timeseries for error rate, latency p95, and pool saturation.',
+          description: 'Autonomous Investigation Agent probing Prometheus timeseries for error rate, latency p95, and pool saturation.',
           inputs: {
+            agent: 'InvestigationAgent',
+            tool: 'get_metrics',
             service,
             metrics: ['error_rate', 'latency_p95_ms', 'db_pool_active']
           },

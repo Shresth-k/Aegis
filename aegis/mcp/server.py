@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 import os
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
@@ -217,6 +219,8 @@ async def rollback_deployment(
     _save_incidents()
 
     # 3. If Docker Compose controller is available and not pure mock, attempt container recreation
+    docker_applied = False
+    docker_detail = None
     if not settings.MOCK_ACME_CLOUD:
         try:
             acme_dir = _PROJECT_ROOT / "acmecloud"
@@ -231,12 +235,115 @@ async def rollback_deployment(
                     deployments_root=deployments_root,
                     project_root=acme_dir,
                 )
-                controller.deploy(service, target_version)
+                dep_res = controller.deploy(service, target_version)
+                docker_applied = True
+                docker_detail = f"Docker Compose recreated {dep_res.service} with {dep_res.deployment_file.name}"
         except Exception as exc:
+            docker_detail = f"Docker Compose notice: {exc}"
             if settings.DEBUG:
                 print(f"[AcmeCloud MCP] Docker Compose rollback notice: {exc}")
 
+    result["execution_mode"] = "DOCKER_COMPOSE" if docker_applied else "SIMULATED_STATE"
+    if docker_detail:
+        result["docker_detail"] = docker_detail
+
     return result
+
+
+@mcp_server.tool()
+async def docker_ps(all_containers: bool = False) -> List[Dict[str, Any]]:
+    """
+    Inspect containers on the host Docker daemon.
+    Returns status, image, and port mappings for services like acmecloud-checkout and postgres.
+
+    Args:
+        all_containers: If True, list all stopped and running containers (-a).
+
+    Returns:
+        List of container metadata objects.
+    """
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        return [{"status": "UNAVAILABLE", "message": "Docker CLI binary not found on host PATH."}]
+
+    cmd = [docker_bin, "ps", "--format", "{{json .}}"]
+    if all_containers:
+        cmd.insert(2, "-a")
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            return [{"status": "ERROR", "message": proc.stderr.strip() or "Failed to run docker ps"}]
+
+        containers = []
+        for line in proc.stdout.strip().split("\n"):
+            line = line.strip()
+            if line:
+                try:
+                    containers.append(json.loads(line))
+                except Exception:
+                    containers.append({"raw": line})
+        return containers
+    except Exception as exc:
+        return [{"status": "ERROR", "message": str(exc)}]
+
+
+@mcp_server.tool()
+async def docker_logs(container_name: str, tail: int = 50) -> List[str]:
+    """
+    Retrieve real-time stdout and stderr logs directly from a Docker container.
+
+    Args:
+        container_name: Target container name or ID (e.g. 'acmecloud-checkout', 'acmecloud-postgres').
+        tail: Number of trailing log lines to retrieve (default: 50).
+
+    Returns:
+        List of log line strings.
+    """
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        return ["Error: Docker CLI binary not found on host PATH."]
+
+    cmd = [docker_bin, "logs", "--tail", str(tail), container_name]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        output = (proc.stdout or "") + (proc.stderr or "")
+        return [line for line in output.split("\n") if line.strip()]
+    except Exception as exc:
+        return [f"Error retrieving docker logs for {container_name}: {exc}"]
+
+
+@mcp_server.tool()
+async def docker_restart_container(container_name: str) -> Dict[str, Any]:
+    """
+    Restart an individual container via the host Docker daemon.
+
+    Args:
+        container_name: Target container name (e.g. 'acmecloud-checkout').
+
+    Returns:
+        Dictionary with status ('SUCCESS' or 'FAILED') and details.
+    """
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        return {"status": "FAILED", "message": "Docker CLI binary not found on host PATH."}
+
+    cmd = [docker_bin, "restart", container_name]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if proc.returncode == 0:
+            return {
+                "status": "SUCCESS",
+                "container": container_name,
+                "message": f"Container {container_name} restarted successfully.",
+            }
+        return {
+            "status": "FAILED",
+            "container": container_name,
+            "message": proc.stderr.strip() or "Restart command returned non-zero code.",
+        }
+    except Exception as exc:
+        return {"status": "FAILED", "container": container_name, "message": str(exc)}
 
 
 @mcp_server.tool()

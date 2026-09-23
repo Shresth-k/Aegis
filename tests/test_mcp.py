@@ -6,6 +6,8 @@ from aegis.mcp.server import (
     get_metrics,
     get_service_health,
     rollback_deployment,
+    docker_ps,
+    docker_logs,
     get_incident_state,
     list_incidents,
     service_health_resource,
@@ -63,11 +65,16 @@ def test_mcp_server_direct_tools():
         rb = await rollback_deployment(service="checkout-service", target_version="2.4.0")
         assert rb["status"] == "SUCCESS"
         assert rb["current_version"] == "2.4.0"
+        assert "execution_mode" in rb
 
         # 8. get_service_health after rollback
         health_after = await get_service_health(service="checkout-service")
         assert health_after["healthy"] is True
         assert health_after["version"] == "2.4.0"
+
+        # 9. docker_ps tool
+        containers = await docker_ps(all_containers=True)
+        assert isinstance(containers, list)
 
     asyncio.run(_run())
 
