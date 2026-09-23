@@ -56,8 +56,8 @@ class RemediationResult(BaseModel):
 
 class VerificationResult(BaseModel):
     is_healthy: bool
-    error_rate: float
-    latency_ms: float
+    error_rate: Optional[float] = None
+    latency_ms: Optional[float] = None
     service_version: str
     status: Literal["SUCCESS", "FAILED"]
     details: str

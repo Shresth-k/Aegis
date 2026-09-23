@@ -22,13 +22,14 @@ import {
   Cpu,
   RotateCcw,
   CheckCircle2,
+  Coins,
   Clock,
   Check,
   Terminal,
   Bot
 } from 'lucide-react';
 import { IncidentState } from '../types';
-import { NodeInspectorDrawer, NodeResultData } from './NodeInspectorDrawer';
+import { NodeInspectorDrawer } from './NodeInspectorDrawer';
 
 interface WorkflowCanvasProps {
   state: IncidentState | null;
@@ -37,7 +38,6 @@ interface WorkflowCanvasProps {
   isRunning?: boolean;
   visibleNodeIds?: string[];
   activeNodeId?: string | null;
-  nodeResults?: Record<string, NodeResultData>;
 }
 
 interface WorkflowNodeData extends Record<string, unknown> {
@@ -46,7 +46,7 @@ interface WorkflowNodeData extends Record<string, unknown> {
   categoryIcon: 'ingest' | 'triage' | 'probe' | 'tool' | 'knowledge' | 'topology' | 'reasoning' | 'policy' | 'action' | 'verify';
   title: string;
   subtitle: string;
-  engine?: string;
+  tokens: string;
   latency: string;
   status: 'IDLE' | 'RUNNING' | 'DONE' | 'GATE';
   isActive?: boolean;
@@ -56,7 +56,7 @@ interface WorkflowNodeData extends Record<string, unknown> {
 
 // Pixel-perfect node with real Aegis incident operational context & thinking-orbs
 const ReferenceNode: React.FC<NodeProps<Node<WorkflowNodeData>>> = ({ data }) => {
-  const { nodeId, category, categoryIcon, title, subtitle, engine, latency, status, isActive, onSelect, isSelected } = data;
+  const { nodeId, category, categoryIcon, title, subtitle, tokens, latency, status, isActive, onSelect, isSelected } = data;
 
   const renderCategoryIcon = () => {
     const iconClass = "w-3 h-3 text-zinc-400";
@@ -140,13 +140,14 @@ const ReferenceNode: React.FC<NodeProps<Node<WorkflowNodeData>>> = ({ data }) =>
         </p>
       </div>
 
-      {/* Bottom Footer: Engine Tag & Latency */}
+      {/* Bottom Footer: Tokens & Latency */}
       <div className="flex items-center justify-between pt-2 border-t border-[#1e1e24] text-[10px] font-mono text-zinc-500">
-        <span className="text-[9px] uppercase tracking-wider text-zinc-400 font-semibold truncate max-w-[125px]">
-          {engine || 'Aegis MCP'}
-        </span>
-        <div className="flex items-center gap-1 text-zinc-400">
-          <Clock className="w-2.5 h-2.5 text-zinc-500" />
+        <div className="flex items-center gap-1.5">
+          <Coins className="w-3 h-3 text-zinc-500" />
+          <span>{tokens}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Clock className="w-3 h-3 text-zinc-500" />
           <span>{latency}</span>
         </div>
       </div>
@@ -184,8 +185,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   selectedNodeId = null,
   isRunning = false,
   visibleNodeIds = [],
-  activeNodeId = null,
-  nodeResults
+  activeNodeId = null
 }) => {
   const status = state?.status || 'OPEN';
   const service = state?.service || 'checkout-service';
@@ -220,14 +220,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       ? `Reverted to ${state.remediation.parameters?.target_version || 'v2.4.0'}`
       : 'Revert to v2.4.0 Container';
     const verSub = state?.verification
-      ? `SLO Nominal · ${(state.verification.error_rate * 100).toFixed(2)}% Err`
+      ? `SLO Nominal · ${state.verification.error_rate != null ? `${(state.verification.error_rate * 100).toFixed(2)}% Err` : 'Restored'}`
       : 'SLO Nominal · 0.02% Err';
-
-    // Helper to get real measured latency from live tool calls
-    const getLat = (id: string, fallback: string) => {
-      const live = nodeResults?.[id]?.latency_ms;
-      return live != null ? `${live.toFixed(1)}ms` : fallback;
-    };
 
     // Catalog of node definitions with their logical DAG stage
     interface NodeTemplate {
@@ -237,7 +231,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       categoryIcon: 'ingest' | 'triage' | 'probe' | 'tool' | 'knowledge' | 'topology' | 'reasoning' | 'policy' | 'action' | 'verify';
       title: string;
       subtitle: string;
-      engine?: string;
+      tokens: string;
       latency: string;
       status: 'IDLE' | 'RUNNING' | 'DONE' | 'GATE';
     }
@@ -250,8 +244,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'ingest',
         title: 'Alert Ingestion',
         subtitle: `Webhook · ${service} (${state?.severity || 'P1'})`,
-        engine: 'WEBHOOK',
-        latency: getLat('ingest', '18.0ms'),
+        tokens: '84t',
+        latency: '18ms',
         status: 'DONE'
       },
       {
@@ -261,8 +255,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'triage',
         title: 'Jev Triage Engine',
         subtitle: 'Model: typesafe-ai/jev · 18ms',
-        engine: 'JEV_AI',
-        latency: getLat('triage', '18.2ms'),
+        tokens: '120t',
+        latency: '18.2ms',
         status: isTriageDone ? 'DONE' : activeNodeId === 'triage' ? 'RUNNING' : 'IDLE'
       },
       {
@@ -272,8 +266,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'probe',
         title: 'Investigator: Logs',
         subtitle: `AcmeCloud FastMCP · ${logCountVal} Error Logs`,
-        engine: 'FASTMCP',
-        latency: getLat('tool-logs', '65.0ms'),
+        tokens: '310t',
+        latency: '65ms',
         status: isProbeDone ? 'DONE' : activeNodeId === 'tool-logs' ? 'RUNNING' : 'IDLE'
       },
       {
@@ -283,8 +277,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'probe',
         title: 'Investigator: Metrics',
         subtitle: `Prometheus · ${errRateVal} 5xx · ${poolActiveVal}/${poolMaxVal} Pool`,
-        engine: 'PROMETHEUS',
-        latency: getLat('tool-metrics', '54.0ms'),
+        tokens: '290t',
+        latency: '54ms',
         status: isProbeDone ? 'DONE' : activeNodeId === 'tool-metrics' ? 'RUNNING' : 'IDLE'
       },
       {
@@ -294,8 +288,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'knowledge',
         title: 'Runbook RAG & Jev',
         subtitle: runbookSub,
-        engine: 'CHROMA_RAG',
-        latency: getLat('knowledge', '110.0ms'),
+        tokens: '620t',
+        latency: '110ms',
         status: isDiagDone ? 'DONE' : activeNodeId === 'knowledge' ? 'RUNNING' : 'IDLE'
       },
       {
@@ -305,8 +299,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'reasoning',
         title: 'AI Diagnostic Agent',
         subtitle: diagSub,
-        engine: 'AI_REASONING',
-        latency: getLat('diagnose', '640.0ms'),
+        tokens: '850t',
+        latency: '640ms',
         status: isDiagDone ? 'DONE' : activeNodeId === 'diagnose' ? 'RUNNING' : 'IDLE'
       },
       {
@@ -316,8 +310,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'policy',
         title: 'Policy Guardrail',
         subtitle: policySub,
-        engine: 'POLICY_OPA',
-        latency: getLat('policy', '82.0ms'),
+        tokens: '140t',
+        latency: '82ms',
         status: isRemDone ? 'DONE' : activeNodeId === 'policy' ? 'RUNNING' : isGateActive ? 'GATE' : 'IDLE'
       },
       {
@@ -327,8 +321,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'action',
         title: 'Remediation Engine',
         subtitle: remSub,
-        engine: 'NEEDLE',
-        latency: getLat('remediate', '410.0ms'),
+        tokens: '320t',
+        latency: '410ms',
         status: isRemDone ? 'DONE' : activeNodeId === 'remediate' ? 'RUNNING' : 'IDLE'
       },
       {
@@ -338,8 +332,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         categoryIcon: 'verify',
         title: 'SLO Verification',
         subtitle: verSub,
-        engine: 'SLO_PROBE',
-        latency: getLat('verify', '42.5ms'),
+        tokens: '540t',
+        latency: '42.5ms',
         status: isVerDone ? 'DONE' : activeNodeId === 'verify' ? 'RUNNING' : 'IDLE'
       }
     ];
@@ -362,8 +356,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           categoryIcon: 'probe',
           title: `Investigator Worker ${num}`,
           subtitle: `Parallel Probe #${num} · 38.5% Err`,
-          engine: 'PROMETHEUS',
-          latency: getLat(id, `${42 + parseInt(num, 10) * 4}ms`),
+          tokens: '280t',
+          latency: `${42 + parseInt(num, 10) * 4}ms`,
           status: 'DONE'
         };
       }
@@ -379,8 +373,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           categoryIcon: 'probe',
           title: `Log Investigator ${num}`,
           subtitle: `Partition #${num} · 3 Errors`,
-          engine: 'FASTMCP',
-          latency: getLat(id, '62.0ms'),
+          tokens: '310t',
+          latency: '62ms',
           status: 'DONE'
         };
       }
@@ -393,9 +387,9 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           category: 'INVESTIGATOR',
           categoryIcon: 'probe',
           title: 'Docker Investigator',
-          subtitle: 'Host Docker Daemon · Containers',
-          engine: 'DOCKER',
-          latency: getLat('docker-ps', '48.0ms'),
+          subtitle: 'Host Docker Daemon · 4 Containers',
+          tokens: '210t',
+          latency: '48ms',
           status: 'DONE'
         };
       }
@@ -405,10 +399,10 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         stage,
         category: 'TOOL',
         categoryIcon: 'tool',
-        title: id.replace(/^tool-/, 'Tool: ').replace(/_/g, ' '),
+        title: id.replace(/^tool-/, 'Tool: '),
         subtitle: `Parallel Execution · ${service}`,
-        engine: nodeResults?.[id]?.source ? 'FASTMCP' : 'TOOL',
-        latency: getLat(id, '45.0ms'),
+        tokens: '250t',
+        latency: '50ms',
         status: 'DONE'
       };
     };
@@ -460,7 +454,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           categoryIcon: tpl.categoryIcon,
           title: tpl.title,
           subtitle: tpl.subtitle,
-          engine: tpl.engine,
+          tokens: tpl.tokens,
           latency: tpl.latency,
           status: tpl.status,
           isActive: activeNodeId === tpl.id,
@@ -469,7 +463,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         }
       };
     });
-  }, [status, service, state, selectedNodeId, onNodeSelect, visibleNodeIds, activeNodeId, nodeResults]);
+  }, [status, service, state, selectedNodeId, onNodeSelect, visibleNodeIds, activeNodeId]);
 
   // Edges connecting active adjacent stages dynamically (supports parallel fan-out and fan-in)
   const edgesData: Edge[] = useMemo(() => {
@@ -613,7 +607,6 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             nodeId={selectedNodeId}
             onClose={() => onNodeSelect('')}
             state={state}
-            nodeResult={nodeResults?.[selectedNodeId] || null}
           />
         )}
 

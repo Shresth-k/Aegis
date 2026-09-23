@@ -21,6 +21,20 @@ export interface TraceEvent {
   incident_id?: string;
 }
 
+/** A persisted visual record of one real agent or tool invocation. */
+export interface ExecutionGraphNode {
+  id: string;
+  name: string;
+  kind: 'agent' | 'tool' | 'gate' | 'action' | 'system';
+  status: 'RUNNING' | 'DONE' | 'FAILED' | 'GATE';
+  parentIds: string[];
+  position: { x: number; y: number };
+  args?: Record<string, any>;
+  output?: any;
+  latency_ms?: number;
+  source?: string;
+}
+
 export interface TelemetryEvidence {
   service: string;
   current_version: string;
@@ -80,8 +94,8 @@ export interface RemediationResult {
 
 export interface VerificationResult {
   is_healthy: boolean;
-  error_rate: number;
-  latency_ms: number;
+  error_rate?: number | null;
+  latency_ms?: number | null;
   service_version: string;
   status: 'SUCCESS' | 'FAILED';
   details: string;

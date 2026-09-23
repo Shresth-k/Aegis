@@ -1,5 +1,6 @@
 import asyncio
 from typing import Dict, Any, Callable, List, Optional
+from uuid import uuid4
 from aegis.core.state import (
     IncidentState,
     RemediationResult,
@@ -49,9 +50,11 @@ class AegisStateGraph:
     def compile(self):
         return self
 
-    async def ainvoke(self, state: IncidentState) -> Dict[str, Any]:
+    async def ainvoke(self, state: IncidentState, on_event: Optional[Callable[[str, str, IncidentState], Any]] = None) -> Dict[str, Any]:
         current_node = self.entry_point
         state_dict = state.model_dump()
+        run_id = uuid4().hex
+        event_index = 0
 
         while current_node and current_node != END:
             node_fn = self.nodes.get(current_node)
@@ -60,10 +63,46 @@ class AegisStateGraph:
 
             # Execute node
             current_state = self.state_schema(**state_dict)
-            updates = await node_fn(current_state)
+            execution_id = f"{state.incident_id}:{run_id}:{event_index}"
+            event_index += 1
+            tracer.log_event(state.incident_id, current_node, "AGENT_STARTED", {
+                "execution_id": execution_id,
+                "name": current_node,
+                "kind": "agent",
+                "args": {"incident_id": state.incident_id, "service": state.service},
+            })
+            if on_event:
+                await on_event(current_node, "start", current_state)
+            try:
+                updates = await node_fn(current_state)
+            except Exception as exc:
+                tracer.log_event(state.incident_id, current_node, "AGENT_COMPLETED", {
+                    "execution_id": execution_id,
+                    "name": current_node,
+                    "kind": "agent",
+                    "status": "FAILED",
+                    "flow_status": "ESCALATED",
+                    "output": {"error": str(exc)},
+                })
+                raise
             if updates:
                 state_dict.update(updates)
+                # Keep the incident object in the API's live store current while
+                # awaited agents run. This preserves partial progress if a later
+                # tool fails and lets the incident SSE stream report real state.
+                for field_name, value in updates.items():
+                    setattr(state, field_name, value)
                 current_state = self.state_schema(**state_dict)
+            tracer.log_event(state.incident_id, current_node, "AGENT_COMPLETED", {
+                "execution_id": execution_id,
+                "name": current_node,
+                "kind": "agent",
+                "status": "DONE",
+                "flow_status": updates.get("status") if updates else current_state.status,
+                "output": updates or {},
+            })
+            if on_event:
+                await on_event(current_node, "complete", current_state)
 
             # Check conditional edge
             if current_node in self.conditional_edges:
@@ -125,6 +164,24 @@ async def diagnose_node(state: IncidentState) -> Dict[str, Any]:
     return {"diagnosis": diagnosis, "status": "DIAGNOSED"}
 
 async def policy_node(state: IncidentState) -> Dict[str, Any]:
+    if state.diagnosis.recommended_action == "escalate_to_human":
+        tracer.log_event(state.incident_id, "policy", "POLICY_EVALUATED", {
+            "action": "escalate_to_human",
+            "risk_level": "MEDIUM",
+            "decision": "DENY",
+            "requires_approval": False,
+            "reason": "Diagnosis could not recommend a supported automated remediation."
+        })
+        return {
+            "policy_evaluation": PolicyEvaluation(
+                action="escalate_to_human",
+                risk_level="MEDIUM",
+                decision="DENY",
+                requires_approval=False,
+                reason="Diagnosis could not recommend a supported automated remediation."
+            ),
+            "status": "ESCALATED"
+        }
     evaluation = policy_engine.evaluate(
         action=state.diagnosis.recommended_action,
         target_service=state.service,
@@ -139,18 +196,35 @@ async def policy_node(state: IncidentState) -> Dict[str, Any]:
         "requires_approval": evaluation.requires_approval
     })
     
-    new_status = "PENDING_APPROVAL" if evaluation.decision == "REQUIRE_APPROVAL" else "REMEDIATING"
+    new_status = (
+        "PENDING_APPROVAL" if evaluation.decision == "REQUIRE_APPROVAL"
+        else "REMEDIATING" if evaluation.decision == "ALLOW"
+        else "ESCALATED"
+    )
     return {"policy_evaluation": evaluation, "status": new_status}
 
 def should_execute_remediation(state: IncidentState) -> str:
-    if state.policy_evaluation and state.policy_evaluation.decision == "REQUIRE_APPROVAL":
-        if not state.approval_granted:
-            return "pause_for_approval"
+    if not state.policy_evaluation or state.policy_evaluation.decision == "DENY":
+        return "pause_for_approval"
+    if state.policy_evaluation.decision == "REQUIRE_APPROVAL" and not state.approval_granted:
+        return "pause_for_approval"
     return "execute_remediation"
+
+
+def should_verify_remediation(state: IncidentState) -> str:
+    return "verify" if state.remediation and state.remediation.status == "SUCCESS" else END
 
 async def remediate_node(state: IncidentState) -> Dict[str, Any]:
     action = state.diagnosis.recommended_action
     params = state.diagnosis.action_parameters
+
+    if action == "rollback_deployment":
+        if not state.policy_evaluation or state.policy_evaluation.action != action:
+            raise RuntimeError("Rollback has no matching recorded policy evaluation")
+        if state.policy_evaluation.decision == "DENY":
+            raise RuntimeError("Policy denied this rollback")
+        if state.policy_evaluation.decision == "REQUIRE_APPROVAL" and not state.approval_granted:
+            raise RuntimeError("Rollback approval has not been recorded")
     
     if action == "rollback_deployment":
         res = await needle_executor.execute_rollback(
@@ -173,12 +247,13 @@ async def remediate_node(state: IncidentState) -> Dict[str, Any]:
             message=f"Action {action} skipped or unhandled."
         )
 
+    next_status = "VERIFYING" if remediation.status == "SUCCESS" else "ESCALATED"
     tracer.log_event(state.incident_id, "remediation", "REMEDIATION_EXECUTED", {
         "action": remediation.action,
         "status": remediation.status,
         "message": remediation.message
     })
-    return {"remediation": remediation, "status": "VERIFYING"}
+    return {"remediation": remediation, "status": next_status}
 
 async def verify_node(state: IncidentState) -> Dict[str, Any]:
     if settings.USE_MCP:
@@ -235,7 +310,10 @@ def create_aegis_workflow():
         }
     )
 
-    workflow.add_edge("remediate", "verify")
+    workflow.add_conditional_edges("remediate", should_verify_remediation, {
+        "verify": "verify",
+        END: END
+    })
     workflow.add_edge("verify", END)
 
     return workflow.compile()

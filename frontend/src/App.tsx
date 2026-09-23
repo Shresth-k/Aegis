@@ -3,7 +3,6 @@ import { TopBar } from './components/TopBar';
 import { WorkflowCanvas } from './components/WorkflowCanvas';
 import { AgentStreamPanel } from './components/AgentStreamPanel';
 import { IncidentState, TraceEvent } from './types';
-import { NodeResultData } from './components/NodeInspectorDrawer';
 
 export default function App() {
   const [currentIncidentId, setCurrentIncidentId] = useState<string>('INC-001');
@@ -22,7 +21,6 @@ export default function App() {
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<number>(0);
-  const [nodeResults, setNodeResults] = useState<Record<string, NodeResultData>>({});
 
   // Paced animation queue for real backend trace events
   const traceQueueRef = useRef<TraceEvent[]>([]);
@@ -231,41 +229,6 @@ export default function App() {
     if (data.new_nodes && Array.isArray(data.new_nodes) && data.new_nodes.length > 0) {
       animateNewNodes(data.new_nodes);
     }
-    // Bind real measured execution telemetry & FastMCP outputs to canvas nodes & inspector drawer
-    if (data.tool_result) {
-      const tr = data.tool_result;
-      const targetNode = tr.node || (tr.name ? tr.name.replace(/_/g, '-') : 'tool');
-      const lat = tr.latency_ms ?? tr.output?.latency_ms;
-      const src = tr.source ?? tr.output?.source;
-      setNodeResults((prev) => ({
-        ...prev,
-        [targetNode]: {
-          output: tr.output,
-          latency_ms: lat,
-          source: src,
-          title: tr.name,
-          args: tr.args
-        }
-      }));
-    }
-    if (data.tool_calls && Array.isArray(data.tool_calls)) {
-      setNodeResults((prev) => {
-        const next = { ...prev };
-        data.tool_calls.forEach((tc: any) => {
-          const targetNode = tc.node || (tc.name ? tc.name.replace(/_/g, '-') : 'tool');
-          const lat = tc.latency_ms ?? tc.output?.latency_ms;
-          const src = tc.source ?? tc.output?.source;
-          next[targetNode] = {
-            output: tc.output,
-            latency_ms: lat,
-            source: src,
-            title: tc.name,
-            args: tc.args
-          };
-        });
-        return next;
-      });
-    }
   }, [animateNewNodes]);
 
   // Fetch incident state
@@ -429,7 +392,6 @@ export default function App() {
       setVisibleNodeIds([]);
       setActiveNodeId(null);
       setSelectedNodeId(null);
-      setNodeResults({});
       setSessionKey((prev) => prev + 1);
       await fetchIncident(currentIncidentId, false);
       await fetchTraces(currentIncidentId);
@@ -445,7 +407,6 @@ export default function App() {
       setVisibleNodeIds([]);
       setActiveNodeId(null);
       setSelectedNodeId(null);
-      setNodeResults({});
       setSessionKey((prev) => prev + 1);
       await fetchIncident(currentIncidentId, false);
       await fetchTraces(currentIncidentId);
@@ -470,7 +431,6 @@ export default function App() {
         currentIncidentId={currentIncidentId}
         onSelectIncident={(id) => {
           setCurrentIncidentId(id);
-          setNodeResults({});
           setSessionKey((prev) => prev + 1);
           fetchIncident(id);
         }}
@@ -489,7 +449,6 @@ export default function App() {
             isRunning={isRunning}
             visibleNodeIds={visibleNodeIds}
             activeNodeId={activeNodeId}
-            nodeResults={nodeResults}
           />
         </div>
 

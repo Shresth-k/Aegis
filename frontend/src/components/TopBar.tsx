@@ -26,6 +26,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onResetChaos
 }) => {
   const status = state?.status || 'OPEN';
+  const workflowBusy = isRunning || ['INVESTIGATING', 'PENDING_APPROVAL', 'REMEDIATING', 'VERIFYING'].includes(status);
 
   const getStatusBadge = () => {
     switch (status) {
@@ -105,6 +106,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* Chaos Injection and Reset Buttons */}
         <button
           onClick={onInjectChaos}
+          disabled={workflowBusy}
           className="bg-[#1e1e24] hover:bg-red-950/60 text-red-300 hover:text-red-200 border border-red-900/40 hover:border-red-700/60 text-xs px-2.5 py-1.5 rounded-lg font-mono flex items-center gap-1.5 transition-all shadow-sm active:scale-[0.98]"
           title="Inject Fault v2.4.1 (DB Connection Pool Starvation)"
         >
@@ -114,6 +116,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         <button
           onClick={onResetChaos}
+          disabled={workflowBusy}
           className="bg-[#1e1e24] hover:bg-emerald-950/60 text-emerald-300 hover:text-emerald-200 border border-emerald-900/40 hover:border-emerald-700/60 text-xs px-2.5 py-1.5 rounded-lg font-mono flex items-center gap-1.5 transition-all shadow-sm active:scale-[0.98]"
           title="Reset Service to Healthy Baseline v2.4.0"
         >

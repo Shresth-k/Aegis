@@ -45,9 +45,9 @@ class DiagnosisAgent:
                 
                 ALLOWED REMEDIATION ACTIONS:
                 - 'rollback_deployment': Revert service to previous known healthy version (required if recent deployment introduced the regression, per runbook RB-001).
-                - 'restart_service': Restart the service if transient deadlock or memory leak.
+                - 'restart_service': Restart container/service (if process is deadlocked, connection pool is hung, or memory leak, but code version itself is nominal).
                 - 'escalate_to_human': Escalate if cause is ambiguous or unresolvable automatically.
-                Do NOT invent actions outside these supported platform operations (e.g. do not suggest 'scale_db_pool').
+                Do NOT invent actions outside these supported platform operations.
                 
                 Return a JSON object with:
                 - root_cause (string: concise root cause description)
@@ -72,6 +72,10 @@ class DiagnosisAgent:
                     config=config
                 )
                 data = json.loads(response.text)
+                if data.get("recommended_action") not in {"rollback_deployment", "restart_service", "escalate_to_human"}:
+                    data["recommended_action"] = "escalate_to_human"
+                    data["action_parameters"] = {"service": evidence.service}
+                    data["reasoning"] = "The model proposed an action this platform cannot safely execute; escalating for human review."
                 return DiagnosisResult(**data)
             except Exception as e:
                 if settings.DEBUG:

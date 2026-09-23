@@ -61,4 +61,9 @@ class NeedleExecutor:
             )
         return result
 
+    async def execute_restart(self, service: str) -> Dict[str, Any]:
+        """Validates parameters and restarts service on AcmeCloud."""
+        validated = RestartParams(service=service)
+        return await acme_client.restart_service(service=validated.service)
+
 needle_executor = NeedleExecutor()

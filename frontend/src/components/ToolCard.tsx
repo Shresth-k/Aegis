@@ -76,31 +76,35 @@ export const ToolCard: React.FC<ToolCardProps> = ({ tool }) => {
     let result = '';
     if (typeof parsedOutput === 'object' && parsedOutput !== null) {
       if (name.includes('triage')) {
-        const sev = parsedOutput.severity || 'P1';
-        const domain = parsedOutput.domain || 'system';
-        const conf = parsedOutput.confidence ? `${(parsedOutput.confidence * 100).toFixed(0)}%` : '95%';
+        const sev = parsedOutput.severity || 'Severity unavailable';
+        const domain = parsedOutput.domain || 'domain unavailable';
+        const conf = parsedOutput.confidence != null ? `${(parsedOutput.confidence * 100).toFixed(0)}%` : 'confidence unavailable';
         result = `${sev} severity (${domain} domain, ${conf} confidence)`;
       } else if (name.includes('metric')) {
-        const err = parsedOutput.error_rate != null ? `${(parsedOutput.error_rate * 100).toFixed(1)}% err` : '0.2% err';
-        const pool = parsedOutput.db_pool_active != null ? `pool: ${parsedOutput.db_pool_active}/${parsedOutput.db_pool_max || 50}` : 'pool nominal';
-        result = `${err}, ${pool}, latency ${parsedOutput.latency_p95_ms || parsedOutput.latency_ms || 42}ms`;
+        const err = parsedOutput.error_rate != null ? `${(parsedOutput.error_rate * 100).toFixed(1)}% err` : 'error rate unavailable';
+        const pool = parsedOutput.db_pool_active != null ? `pool: ${parsedOutput.db_pool_active}/${parsedOutput.db_pool_max ?? 'unknown'}` : 'pool data unavailable';
+        const latency = parsedOutput.latency_p95_ms ?? parsedOutput.latency_ms;
+        result = `${err}, ${pool}, latency ${latency != null ? `${latency}ms` : 'unavailable'}`;
       } else if (name.includes('log')) {
-        const count = Array.isArray(parsedOutput) ? parsedOutput.length : (parsedOutput.log_count || parsedOutput.error_count || 1);
-        result = `Captured ${count} log entries for ${argsObj.service || 'service'}`;
+        const count = Array.isArray(parsedOutput) ? parsedOutput.length : (parsedOutput.log_count ?? parsedOutput.error_count ?? parsedOutput.count ?? parsedOutput.logs?.length);
+        result = `${count != null ? `Captured ${count} log entries` : 'Log count unavailable'} for ${argsObj.service || 'service'}`;
       } else if (name.includes('policy')) {
-        const decision = parsedOutput.decision || 'REQUIRE_APPROVAL';
-        result = `${decision} · ${parsedOutput.reason || 'Safety guardrail evaluated'}`;
+        const decision = parsedOutput.decision || 'Decision unavailable';
+        result = `${decision}${parsedOutput.reason ? ` · ${parsedOutput.reason}` : ''}`;
       } else if (name.includes('rollback') || name.includes('remediat')) {
-        result = `${parsedOutput.status || 'SUCCESS'} · Container reverted to baseline v2.4.0`;
+        const target = parsedOutput.parameters?.target_version || parsedOutput.target_version || argsObj.target_version;
+        result = `${parsedOutput.status || 'Status unavailable'}${target ? ` · Target v${target}` : ''}${parsedOutput.message ? ` · ${parsedOutput.message}` : ''}`;
       } else if (name.includes('verify')) {
-        result = `Nominal health confirmed (error rate ${parsedOutput.error_rate ? (parsedOutput.error_rate * 100).toFixed(2) + '%' : '0.20%'})`;
+        result = parsedOutput.error_rate != null
+          ? `${parsedOutput.status || 'Verification'} · error rate ${(parsedOutput.error_rate * 100).toFixed(2)}%`
+          : parsedOutput.status || 'Verification result unavailable';
       } else {
         result = parsedOutput.message || parsedOutput.summary || parsedOutput.status || parsedOutput.result || JSON.stringify(parsedOutput);
       }
     } else if (typeof parsedOutput === 'string') {
       result = parsedOutput;
     } else {
-      result = 'Action executed successfully';
+      result = 'No result payload was recorded';
     }
 
     return {

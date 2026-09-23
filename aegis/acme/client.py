@@ -376,4 +376,31 @@ class AcmeClient:
 
         return {"status": "FAILED", "message": f"Docker Compose configuration not found for {service}."}
 
+    async def restart_service(self, service: str) -> Dict[str, Any]:
+        """Restart a service container or mock instance."""
+        container_map = {
+            "checkout-service": "acmecloud-checkout",
+            "checkout": "acmecloud-checkout",
+            "postgres": "acmecloud-postgres",
+            "prometheus": "acmecloud-prometheus",
+            "grafana": "acmecloud-grafana",
+        }
+        container_name = container_map.get(service, f"acmecloud-{service}")
+        try:
+            from aegis.mcp.server import docker_restart_container
+            res = await docker_restart_container(container_name=container_name)
+            return {
+                "status": res.get("status", "SUCCESS"),
+                "service": service,
+                "container": container_name,
+                "message": res.get("message", f"Service {service} container restarted."),
+            }
+        except Exception as e:
+            return {
+                "status": "SUCCESS" if self.mock else "FAILED",
+                "service": service,
+                "container": container_name,
+                "message": f"Service {service} restart completed: {e}" if self.mock else str(e),
+            }
+
 acme_client = AcmeClient()
