@@ -121,9 +121,11 @@ def _load_incidents() -> Dict[str, Dict[str, Any]]:
     return _incidents_store
 
 
-def _save_incidents() -> None:
-    global _last_incidents_mtime
+def _save_incidents(data: Optional[Dict[str, Any]] = None) -> None:
+    global _incidents_store, _last_incidents_mtime
     try:
+        if data is not None:
+            _incidents_store = data
         with open(_INCIDENTS_FILE, "w", encoding="utf-8") as f:
             json.dump(_incidents_store, f, indent=2)
         _last_incidents_mtime = _INCIDENTS_FILE.stat().st_mtime
