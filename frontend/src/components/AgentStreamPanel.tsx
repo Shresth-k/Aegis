@@ -681,7 +681,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                       )}
                     </div>
 
-                    {/* Inline Policy Status / Confirmation (Rendered directly beneath the assistant's request) */}
+                    {/* Inline Policy Status / Confirmation (Shown upon resolution or rejection) */}
                     {!isUser && gate && (
                       status === 'RESOLVED' || state?.approval_granted ? (
                         <div className="bg-[#141418] border border-emerald-900/40 rounded-xl p-2.5 text-xs text-emerald-300 flex items-center gap-2 mt-2">
@@ -697,44 +697,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                             <strong>Rejected by Operator.</strong> Escalated to human on-call Lead SRE.
                           </span>
                         </div>
-                      ) : (
-                        <div className="bg-[#16161a] border border-white/10 rounded-xl p-3 text-xs text-zinc-300 space-y-2 mt-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <ShieldCheck className="w-3.5 h-3.5 text-white" />
-                              <span className="font-semibold text-white">Policy Guardrail Hooked</span>
-                            </div>
-                            <span className="text-[10px] font-mono text-zinc-200 bg-white/10 border border-white/20 px-1.5 py-0.5 rounded font-semibold">
-                              {gate.risk_level || 'HIGH'} RISK
-                            </span>
-                          </div>
-                          <p className="text-zinc-300 text-xs leading-relaxed font-sans">
-                            {gate.reason || `Action ${gate.action} requires operator approval before execution.`}
-                          </p>
-                          <div className="flex items-center gap-2 pt-0.5">
-                            <button
-                              onClick={() => {
-                                handleSendText(`Approve rollback to v${gate.target_version || '2.4.0'}`);
-                              }}
-                              disabled={isApproving || isCopilotThinking}
-                              className="px-3 py-1.5 bg-white hover:bg-zinc-200 text-black text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                            >
-                              <Check className="w-3.5 h-3.5 text-black" />
-                              <span>{isApproving ? 'Executing...' : `Approve Rollback to v${gate.target_version || '2.4.0'}`}</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                handleSendText('Reject rollback');
-                              }}
-                              disabled={isApproving || isCopilotThinking}
-                              className="px-3 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 hover:text-white border border-[#27272a] text-xs rounded-lg font-medium flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
-                            >
-                              <X className="w-3.5 h-3.5 text-zinc-400" />
-                              <span>Reject</span>
-                            </button>
-                          </div>
-                        </div>
-                      )
+                      ) : null
                     )}
                   </div>
                 );

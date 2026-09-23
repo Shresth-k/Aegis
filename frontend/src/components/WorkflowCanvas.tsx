@@ -38,6 +38,7 @@ interface WorkflowCanvasProps {
   isRunning?: boolean;
   visibleNodeIds?: string[];
   activeNodeId?: string | null;
+  onClearCanvas?: () => void;
 }
 
 interface WorkflowNodeData extends Record<string, unknown> {
@@ -185,7 +186,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   selectedNodeId = null,
   isRunning = false,
   visibleNodeIds = [],
-  activeNodeId = null
+  activeNodeId = null,
+  onClearCanvas
 }) => {
   const status = state?.status || 'OPEN';
   const service = state?.service || 'checkout-service';
@@ -407,44 +409,63 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       };
     };
 
-    // Filter to only visible nodes and resolve templates
-    const activeNodes = visibleNodeIds.map(resolveNodeTemplate);
-    if (activeNodes.length === 0) return [];
+    // Distinguish primary closed-loop pipeline nodes from secondary/parallel/docker ad-hoc nodes
+    const isSecondaryNode = (id: string): boolean => {
+      return (
+        id.startsWith('tool-metrics-') ||
+        id.startsWith('tool-logs-') ||
+        id.startsWith('tool-probe-') ||
+        id.startsWith('worker-') ||
+        id.startsWith('docker') ||
+        id.includes('-parallel')
+      );
+    };
 
-    // Group active nodes by logical stage to dynamically assign compact horizontal columns
-    const uniqueStages = Array.from(new Set(activeNodes.map((n) => n.stage))).sort((a, b) => a - b);
+    const primaryVisible = visibleNodeIds.filter((id) => !isSecondaryNode(id));
+    const secondaryVisible = visibleNodeIds.filter((id) => isSecondaryNode(id));
+    const hasPrimary = primaryVisible.length > 0;
+    const hasSecondary = secondaryVisible.length > 0;
+
+    const primaryNodes = primaryVisible.map(resolveNodeTemplate);
+    const secondaryNodes = secondaryVisible.map(resolveNodeTemplate);
+
+    // Group primary nodes by logical stage to dynamically assign compact horizontal columns
+    const uniquePrimaryStages = Array.from(new Set(primaryNodes.map((n) => n.stage))).sort((a, b) => a - b);
     const stageToColMap = new Map<number, number>();
-    uniqueStages.forEach((stage, idx) => {
+    uniquePrimaryStages.forEach((stage, idx) => {
       stageToColMap.set(stage, idx);
     });
 
-    // Count how many nodes are in each stage for vertical spacing
     const stageCounts = new Map<number, number>();
     const stageIndexes = new Map<number, number>();
-    activeNodes.forEach((n) => {
+    primaryNodes.forEach((n) => {
       stageCounts.set(n.stage, (stageCounts.get(n.stage) || 0) + 1);
     });
 
-    return activeNodes.map((tpl) => {
+    const resultNodes: Node[] = [];
+
+    // 1. Layout Primary Pipeline Nodes (Row 0)
+    primaryNodes.forEach((tpl) => {
       const colIdx = stageToColMap.get(tpl.stage) || 0;
       const countInStage = stageCounts.get(tpl.stage) || 1;
       const currentIndexInStage = stageIndexes.get(tpl.stage) || 0;
       stageIndexes.set(tpl.stage, currentIndexInStage + 1);
 
-      // Compute dynamic X coordinate based on active column
       const x = 60 + colIdx * 270;
+      let y = hasSecondary ? 180 : 280;
 
-      // Compute dynamic Y coordinate (centered or stacked evenly for parallel fan-out)
-      let y = 280;
       if (countInStage === 2) {
-        y = currentIndexInStage === 0 ? 170 : 390;
+        y = hasSecondary
+          ? (currentIndexInStage === 0 ? 110 : 250)
+          : (currentIndexInStage === 0 ? 170 : 390);
       } else if (countInStage > 2) {
         const spacing = 135;
         const totalHeight = (countInStage - 1) * spacing;
-        y = 280 - totalHeight / 2 + currentIndexInStage * spacing;
+        const centerY = hasSecondary ? 180 : 280;
+        y = centerY - totalHeight / 2 + currentIndexInStage * spacing;
       }
 
-      return {
+      resultNodes.push({
         id: tpl.id,
         type: 'workflowNode',
         position: { x, y },
@@ -461,43 +482,124 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           onSelect: onNodeSelect,
           isSelected: selectedNodeId === tpl.id
         }
-      };
+      });
     });
+
+    // 2. Layout Secondary / Parallel / Docker Nodes (Row 1 - Positioned cleanly below the main graph)
+    secondaryNodes.forEach((tpl, idx) => {
+      const x = 60 + idx * 270;
+      const y = hasPrimary ? 460 : 280;
+
+      resultNodes.push({
+        id: tpl.id,
+        type: 'workflowNode',
+        position: { x, y },
+        data: {
+          nodeId: tpl.id,
+          category: tpl.category,
+          categoryIcon: tpl.categoryIcon,
+          title: tpl.title,
+          subtitle: tpl.subtitle,
+          tokens: tpl.tokens,
+          latency: tpl.latency,
+          status: tpl.status,
+          isActive: activeNodeId === tpl.id,
+          onSelect: onNodeSelect,
+          isSelected: selectedNodeId === tpl.id
+        }
+      });
+    });
+
+    return resultNodes;
   }, [status, service, state, selectedNodeId, onNodeSelect, visibleNodeIds, activeNodeId]);
 
   // Edges connecting active adjacent stages dynamically (supports parallel fan-out and fan-in)
   const edgesData: Edge[] = useMemo(() => {
     if (visibleNodeIds.length < 2) return [];
 
-    const activeWithStages = visibleNodeIds.map((id) => ({
-      id,
-      stage: getNodeStage(id)
-    }));
+    const isSecondaryNode = (id: string): boolean => {
+      return (
+        id.startsWith('tool-metrics-') ||
+        id.startsWith('tool-logs-') ||
+        id.startsWith('tool-probe-') ||
+        id.startsWith('worker-') ||
+        id.startsWith('docker') ||
+        id.includes('-parallel')
+      );
+    };
 
-    const uniqueStages = Array.from(new Set(activeWithStages.map((n) => n.stage))).sort((a, b) => a - b);
+    const primaryVisible = visibleNodeIds.filter((id) => !isSecondaryNode(id));
+    const secondaryVisible = visibleNodeIds.filter((id) => isSecondaryNode(id));
     const edges: Edge[] = [];
 
-    // Connect nodes in each active stage to all nodes in the next active stage
-    for (let i = 0; i < uniqueStages.length - 1; i++) {
-      const currentStage = uniqueStages[i];
-      const nextStage = uniqueStages[i + 1];
+    // 1. Primary Lane Edges (stays strictly within primary pipeline)
+    if (primaryVisible.length >= 2) {
+      const activeWithStages = primaryVisible.map((id) => ({
+        id,
+        stage: getNodeStage(id)
+      }));
+      const uniqueStages = Array.from(new Set(activeWithStages.map((n) => n.stage))).sort((a, b) => a - b);
 
-      const fromNodes = activeWithStages.filter((n) => n.stage === currentStage);
-      const toNodes = activeWithStages.filter((n) => n.stage === nextStage);
+      for (let i = 0; i < uniqueStages.length - 1; i++) {
+        const currentStage = uniqueStages[i];
+        const nextStage = uniqueStages[i + 1];
 
-      for (const from of fromNodes) {
-        for (const to of toNodes) {
-          const edgeId = `e-${from.id}-${to.id}`;
-          const isActivelyExecuting = from.id === activeNodeId || to.id === activeNodeId;
+        const fromNodes = activeWithStages.filter((n) => n.stage === currentStage);
+        const toNodes = activeWithStages.filter((n) => n.stage === nextStage);
 
+        for (const from of fromNodes) {
+          for (const to of toNodes) {
+            const edgeId = `e-${from.id}-${to.id}`;
+            const isActivelyExecuting = from.id === activeNodeId || to.id === activeNodeId;
+
+            edges.push({
+              id: edgeId,
+              source: from.id,
+              target: to.id,
+              animated: isActivelyExecuting,
+              style: isActivelyExecuting
+                ? { stroke: '#ffffff', strokeWidth: 2 }
+                : { stroke: '#52525b', strokeWidth: 1.5, opacity: 0.6 }
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Secondary Lane Edges (connects parallel workers below the main graph)
+    if (secondaryVisible.length > 0) {
+      const triageNode = primaryVisible.find((id) => id === 'triage');
+      const diagnoseNode = primaryVisible.find((id) => id === 'diagnose');
+
+      for (const secId of secondaryVisible) {
+        if (triageNode) {
+          const edgeId = `e-${triageNode}-${secId}`;
+          const isActivelyExecuting = secId === activeNodeId || triageNode === activeNodeId;
           edges.push({
             id: edgeId,
-            source: from.id,
-            target: to.id,
+            source: triageNode,
+            target: secId,
             animated: isActivelyExecuting,
-            style: isActivelyExecuting
-              ? { stroke: '#ffffff', strokeWidth: 2 }
-              : { stroke: '#52525b', strokeWidth: 1.5, opacity: 0.6 }
+            style: {
+              stroke: isActivelyExecuting ? '#ffffff' : '#71717a',
+              strokeWidth: 1.5,
+              strokeDasharray: '4 4'
+            }
+          });
+        }
+        if (diagnoseNode && !triageNode) {
+          const edgeId = `e-${secId}-${diagnoseNode}`;
+          const isActivelyExecuting = secId === activeNodeId || diagnoseNode === activeNodeId;
+          edges.push({
+            id: edgeId,
+            source: secId,
+            target: diagnoseNode,
+            animated: isActivelyExecuting,
+            style: {
+              stroke: isActivelyExecuting ? '#ffffff' : '#71717a',
+              strokeWidth: 1.5,
+              strokeDasharray: '4 4'
+            }
           });
         }
       }
@@ -670,6 +772,22 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                 v2.4.0
               </span>
             </div>
+
+            {/* Clear Canvas Action Button */}
+            {visibleNodeIds.length > 0 && onClearCanvas && (
+              <>
+                <span className="w-[1px] h-3.5 bg-[#26262b]" />
+                <button
+                  onClick={onClearCanvas}
+                  disabled={isRunning || Boolean(activeNodeId)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400 hover:text-white hover:bg-white/10 px-2 py-0.5 rounded transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  title="Clear canvas nodes and reset graph"
+                >
+                  <RotateCcw className="w-3 h-3 text-zinc-400" />
+                  <span>Clear Canvas</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

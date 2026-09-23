@@ -423,6 +423,12 @@ export default function App() {
     console.log('Operator message sent:', msg);
   };
 
+  const handleClearCanvas = () => {
+    setVisibleNodeIds([]);
+    setActiveNodeId(null);
+    setSelectedNodeId(null);
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#000000] text-zinc-100 font-sans">
       {/* 1. Global Unified TopBar spanning entire screen */}
@@ -453,6 +459,7 @@ export default function App() {
             isRunning={isRunning}
             visibleNodeIds={visibleNodeIds}
             activeNodeId={activeNodeId}
+            onClearCanvas={handleClearCanvas}
           />
         </div>
 
