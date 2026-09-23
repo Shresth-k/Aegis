@@ -946,7 +946,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 "When investigating an incident (e.g. user says 'start', 'investigate', 'what is wrong', 'diagnose', or asks for status), autonomously call the tools to inspect triage, metrics, logs, runbooks, and evaluate policy.\n"
                 "When answering queries about metrics, provide Live Telemetry and Error Rate.\n"
                 "When answering queries about policy, explain the Policy guardrail.\n"
-                "CRITICAL SAFETY RULE: High-risk remediation actions like rollback_deployment require human operator approval. Always evaluate policy before proposing or executing rollback. Never execute rollback without operator approval.\n"
+                "CRITICAL SAFETY RULE: High-risk remediation actions like rollback_deployment require human operator approval. Always evaluate policy before proposing or executing rollback. Never execute rollback without operator approval. When you recommend rollback to v2.4.0 after evaluating policy, explicitly ask the human operator for approval in your message text (e.g.: 'Production rollback requires human operator approval. Please approve or reject below to proceed.'). Do NOT propose or ask for approval on routine queries, docker container checks, or informational questions.\n"
                 "Provide clear, professional SRE markdown responses summarizing your findings."
             )
 
@@ -1432,7 +1432,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
             f"**Root Cause Diagnosis:**\n"
             f"{diagnosis.root_cause}\n\n"
             f"**Evidence Summary:**\n{evidence_bullets}\n\n"
-            f"**Policy Guardrail Gate**: Action `{diagnosis.recommended_action}` to `v{target_v}` is classified as **{res_pol.get('risk_level', 'HIGH')}** risk. Human-in-the-Loop operator approval is required before execution."
+            f"**Policy Guardrail Gate**: Action `{diagnosis.recommended_action}` to `v{target_v}` is classified as **{res_pol.get('risk_level', 'HIGH')}** risk. Human-in-the-Loop operator approval is required before execution. Please approve or reject below to proceed."
         )
 
         async for chunk in emit_text(reply):

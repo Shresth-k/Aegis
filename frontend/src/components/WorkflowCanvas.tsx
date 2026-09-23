@@ -107,7 +107,7 @@ const ReferenceNode: React.FC<NodeProps<Node<WorkflowNodeData>>> = ({ data }) =>
         </div>
 
         {/* Status Badge with ThinkingOrb for active execution */}
-        {status === 'RUNNING' || isActive ? (
+        {status === 'RUNNING' || (isActive && status !== 'GATE' && status !== 'DONE') ? (
           <div className="flex items-center gap-1.5 bg-white/10 border border-white/20 px-1.5 py-0.5 rounded">
             <ThinkingOrb state="working" size={20} color="#ffffff" theme="dark" />
             <span className="text-[9px] font-mono text-white font-bold animate-pulse">
@@ -195,8 +195,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     const isTriageDone = visibleNodeIds.includes('tool-logs') || visibleNodeIds.includes('tool-metrics') || visibleNodeIds.includes('diagnose');
     const isProbeDone = visibleNodeIds.includes('knowledge') || visibleNodeIds.includes('diagnose');
     const isDiagDone = visibleNodeIds.includes('policy') || visibleNodeIds.includes('remediate') || visibleNodeIds.includes('verify');
-    const isGateActive = visibleNodeIds.includes('policy') && !visibleNodeIds.includes('remediate');
-    const isRemDone = visibleNodeIds.includes('verify');
+    const isGateActive = visibleNodeIds.includes('policy') && !visibleNodeIds.includes('remediate') && status === 'PENDING_APPROVAL';
+    const isRemDone = visibleNodeIds.includes('remediate') || visibleNodeIds.includes('verify') || status === 'RESOLVED';
     const isVerDone = status === 'RESOLVED' && visibleNodeIds.includes('verify');
 
     // Dynamic telemetry subtitles from actual incident state
@@ -312,7 +312,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         subtitle: policySub,
         tokens: '140t',
         latency: '82ms',
-        status: isRemDone ? 'DONE' : isGateActive ? 'GATE' : 'IDLE'
+        status: isRemDone ? 'DONE' : activeNodeId === 'policy' ? 'RUNNING' : isGateActive ? 'GATE' : 'IDLE'
       },
       {
         id: 'remediate',

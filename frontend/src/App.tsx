@@ -20,6 +20,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [sessionKey, setSessionKey] = useState<number>(0);
 
   // Paced animation queue for real backend trace events
   const traceQueueRef = useRef<TraceEvent[]>([]);
@@ -59,12 +60,18 @@ export default function App() {
         setVisibleNodeIds((prev) => Array.from(new Set([...prev, 'diagnose'])));
         setActiveNodeId('diagnose');
         setSelectedNodeId('diagnose');
+        setTimeout(() => {
+          setActiveNodeId(null);
+        }, 800);
         break;
 
       case 'POLICY_EVALUATED':
         setVisibleNodeIds((prev) => Array.from(new Set([...prev, 'policy'])));
         setActiveNodeId('policy');
         setSelectedNodeId('policy');
+        setTimeout(() => {
+          setActiveNodeId(null);
+        }, 800);
         break;
 
       case 'APPROVAL_DECISION':
@@ -185,11 +192,11 @@ export default function App() {
       setSelectedNodeId('remediate');
     } else if (st.status === 'PENDING_APPROVAL' || st.policy_evaluation || st.policy_decision) {
       setVisibleNodeIds(['ingest', 'triage', 'tool-logs', 'tool-metrics', 'knowledge', 'diagnose', 'policy']);
-      setActiveNodeId('policy');
+      setActiveNodeId(null);
       setSelectedNodeId('policy');
     } else if (st.status === 'DIAGNOSED' || st.diagnosis) {
       setVisibleNodeIds(['ingest', 'triage', 'tool-logs', 'tool-metrics', 'knowledge', 'diagnose']);
-      setActiveNodeId('diagnose');
+      setActiveNodeId(null);
       setSelectedNodeId('diagnose');
     } else {
       setVisibleNodeIds([]);
@@ -385,6 +392,7 @@ export default function App() {
       setVisibleNodeIds([]);
       setActiveNodeId(null);
       setSelectedNodeId(null);
+      setSessionKey((prev) => prev + 1);
       await fetchIncident(currentIncidentId, false);
       await fetchTraces(currentIncidentId);
     } catch (err) {
@@ -399,6 +407,7 @@ export default function App() {
       setVisibleNodeIds([]);
       setActiveNodeId(null);
       setSelectedNodeId(null);
+      setSessionKey((prev) => prev + 1);
       await fetchIncident(currentIncidentId, false);
       await fetchTraces(currentIncidentId);
     } catch (err) {
@@ -422,6 +431,7 @@ export default function App() {
         currentIncidentId={currentIncidentId}
         onSelectIncident={(id) => {
           setCurrentIncidentId(id);
+          setSessionKey((prev) => prev + 1);
           fetchIncident(id);
         }}
         onInjectChaos={handleInjectChaos}
@@ -444,6 +454,7 @@ export default function App() {
 
         {/* Right Glassmorphic Agent Stream Panel */}
         <AgentStreamPanel
+          key={`${currentIncidentId}-${sessionKey}`}
           state={incidentState}
           traces={traces}
           selectedNodeId={selectedNodeId}
