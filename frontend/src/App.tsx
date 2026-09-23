@@ -224,7 +224,11 @@ export default function App() {
 
   const handleChatResponse = useCallback((data: any) => {
     if (data.status) {
-      setIncidentState((prev) => prev ? { ...prev, status: data.status } : null);
+      setIncidentState((prev) => prev ? {
+        ...prev,
+        status: data.status,
+        approval_granted: data.status === 'RESOLVED' ? true : prev.approval_granted
+      } : null);
     }
     if (data.new_nodes && Array.isArray(data.new_nodes) && data.new_nodes.length > 0) {
       animateNewNodes(data.new_nodes);

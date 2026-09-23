@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import {
   Terminal,
@@ -114,6 +114,35 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
     }));
   };
 
+  // Helper to determine if a message contains a policy gate awaiting approval
+  const getPolicyGate = useCallback(
+    (msg: ChatTurn): PolicyGateData | null => {
+      if (msg.policyGate && msg.policyGate.requires_approval) return msg.policyGate;
+      if (msg.role !== 'assistant') return null;
+      const t = (msg.text || '').toLowerCase();
+      const isApprovalText =
+        t.includes('approve or reject') ||
+        t.includes('operator approval') ||
+        t.includes('human authorization') ||
+        t.includes('human operator approval') ||
+        t.includes('requires explicit operator approval') ||
+        t.includes('requires operator approval') ||
+        t.includes('please approve or reject') ||
+        t.includes('please approve') ||
+        (t.includes('requires_approval: true') && (t.includes('rollback') || t.includes('remediat')));
+      if (!isApprovalText) return null;
+      return {
+        action: 'rollback_deployment',
+        service: state?.service || 'checkout-service',
+        target_version: '2.4.0',
+        risk_level: 'HIGH',
+        requires_approval: true,
+        reason: 'Production rollback requires human operator approval.'
+      };
+    },
+    [state?.service]
+  );
+
   // Find latest active policy gate for pinned bottom approval
   // MUST only hook if the most recent assistant message explicitly asked for approval
   // and the user has not yet replied to it.
@@ -129,12 +158,13 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
       if (msg.role === 'user') {
         return null;
       }
-      if (msg.role === 'assistant' && msg.policyGate) {
-        return msg.policyGate;
+      const gate = getPolicyGate(msg);
+      if (msg.role === 'assistant' && gate) {
+        return gate;
       }
     }
     return null;
-  }, [chatMessages, status, state?.approval_granted]);
+  }, [chatMessages, status, state?.approval_granted, getPolicyGate]);
 
   const isPendingApproval =
     Boolean(latestPolicyGate) &&
@@ -589,13 +619,14 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                 if (filter === 'all') return true;
                 if (filter === 'reasoning') return Boolean(msg.thinking);
                 if (filter === 'tools') return Boolean((msg.toolCalls && msg.toolCalls.length > 0) || msg.toolCall);
-                if (filter === 'gate') return Boolean(msg.policyGate);
+                if (filter === 'gate') return Boolean(getPolicyGate(msg));
                 return true;
               })
               .map((msg) => {
                 const tools = msg.toolCalls || (msg.toolCall ? [msg.toolCall] : []);
                 const isUser = msg.role === 'user';
                 const isThinkingCollapsed = collapsedThinking[msg.id] ?? false;
+                const gate = getPolicyGate(msg);
 
                 return (
                   <div
@@ -642,53 +673,61 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                       </div>
                     )}
 
-                    {/* Inline Policy Status / Confirmation */}
-                    {!isUser && msg.policyGate && (
+                    {/* Rich Markdown Message Text */}
+                    <div className="text-zinc-200 text-xs leading-relaxed pt-0.5 font-sans">
+                      <MarkdownRenderer content={msg.text} />
+                      {msg.isStreaming && (
+                        <span className="inline-block w-1.5 h-3.5 bg-white ml-1 animate-pulse align-middle" />
+                      )}
+                    </div>
+
+                    {/* Inline Policy Status / Confirmation (Rendered directly beneath the assistant's request) */}
+                    {!isUser && gate && (
                       status === 'RESOLVED' || state?.approval_granted ? (
-                        <div className="bg-[#141418] border border-emerald-900/40 rounded-xl p-2.5 text-xs text-emerald-300 flex items-center gap-2">
+                        <div className="bg-[#141418] border border-emerald-900/40 rounded-xl p-2.5 text-xs text-emerald-300 flex items-center gap-2 mt-2">
                           <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                           <span>
-                            <strong>Approved by LeadSRE.</strong> Rollback to v{msg.policyGate.target_version || '2.4.0'} executed and verified.
+                            <strong>Approved by LeadSRE.</strong> Rollback to v{gate.target_version || '2.4.0'} executed and verified.
                           </span>
                         </div>
                       ) : status === 'ESCALATED' ? (
-                        <div className="bg-[#141418] border border-zinc-700 rounded-xl p-2.5 text-xs text-zinc-300 flex items-center gap-2">
+                        <div className="bg-[#141418] border border-zinc-700 rounded-xl p-2.5 text-xs text-zinc-300 flex items-center gap-2 mt-2">
                           <X className="w-4 h-4 text-zinc-400 shrink-0" />
                           <span>
                             <strong>Rejected by Operator.</strong> Escalated to human on-call Lead SRE.
                           </span>
                         </div>
                       ) : (
-                        <div className="bg-[#16161a] border border-white/10 rounded-xl p-3 text-xs text-zinc-300 space-y-2">
+                        <div className="bg-[#16161a] border border-white/10 rounded-xl p-3 text-xs text-zinc-300 space-y-2 mt-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <ShieldCheck className="w-3.5 h-3.5 text-white" />
                               <span className="font-semibold text-white">Policy Guardrail Hooked</span>
                             </div>
                             <span className="text-[10px] font-mono text-zinc-200 bg-white/10 border border-white/20 px-1.5 py-0.5 rounded font-semibold">
-                              {msg.policyGate.risk_level || 'HIGH'} RISK
+                              {gate.risk_level || 'HIGH'} RISK
                             </span>
                           </div>
                           <p className="text-zinc-300 text-xs leading-relaxed font-sans">
-                            {msg.policyGate.reason || `Action ${msg.policyGate.action} requires operator approval before execution.`}
+                            {gate.reason || `Action ${gate.action} requires operator approval before execution.`}
                           </p>
                           <div className="flex items-center gap-2 pt-0.5">
                             <button
                               onClick={() => {
-                                handleSendText(`Approve rollback to v${msg.policyGate?.target_version || '2.4.0'}`);
+                                handleSendText(`Approve rollback to v${gate.target_version || '2.4.0'}`);
                               }}
                               disabled={isApproving || isCopilotThinking}
-                              className="px-3 py-1.5 bg-white hover:bg-zinc-200 text-black text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                              className="px-3 py-1.5 bg-white hover:bg-zinc-200 text-black text-xs rounded-lg font-semibold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
                             >
                               <Check className="w-3.5 h-3.5 text-black" />
-                              <span>Approve Rollback</span>
+                              <span>{isApproving ? 'Executing...' : `Approve Rollback to v${gate.target_version || '2.4.0'}`}</span>
                             </button>
                             <button
                               onClick={() => {
                                 handleSendText('Reject rollback');
                               }}
                               disabled={isApproving || isCopilotThinking}
-                              className="px-3 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 hover:text-white border border-[#27272a] text-xs rounded-lg font-medium flex items-center gap-1.5 transition-all active:scale-95"
+                              className="px-3 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 hover:text-white border border-[#27272a] text-xs rounded-lg font-medium flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
                             >
                               <X className="w-3.5 h-3.5 text-zinc-400" />
                               <span>Reject</span>
@@ -697,14 +736,6 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                         </div>
                       )
                     )}
-
-                    {/* Rich Markdown Message Text */}
-                    <div className="text-zinc-200 text-xs leading-relaxed pt-0.5 font-sans">
-                      <MarkdownRenderer content={msg.text} />
-                      {msg.isStreaming && (
-                        <span className="inline-block w-1.5 h-3.5 bg-white ml-1 animate-pulse align-middle" />
-                      )}
-                    </div>
                   </div>
                 );
               })}
