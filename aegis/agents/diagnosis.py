@@ -43,11 +43,17 @@ class DiagnosisAgent:
                 RELEVANT RUNBOOKS:
                 {chr(10).join(f"- {rb.title}: {rb.content}" for rb in runbooks)}
                 
+                ALLOWED REMEDIATION ACTIONS:
+                - 'rollback_deployment': Revert service to previous known healthy version (required if recent deployment introduced the regression, per runbook RB-001).
+                - 'restart_service': Restart the service if transient deadlock or memory leak.
+                - 'escalate_to_human': Escalate if cause is ambiguous or unresolvable automatically.
+                Do NOT invent actions outside these supported platform operations (e.g. do not suggest 'scale_db_pool').
+                
                 Return a JSON object with:
                 - root_cause (string: concise root cause description)
                 - confidence (float between 0.0 and 1.0)
                 - evidence_summary (list of strings: evidence items supporting diagnosis)
-                - recommended_action (string: e.g. 'rollback_deployment')
+                - recommended_action (string: must be one of 'rollback_deployment', 'restart_service', 'escalate_to_human')
                 - action_parameters (object: e.g. {{"service": "{evidence.service}", "target_version": "{evidence.previous_version or '2.4.0'}"}})
                 - reasoning (string: step-by-step explanation of why this action resolves the issue)
                 """

@@ -1,7 +1,7 @@
 import os
 import json
 import httpx
-from typing import List
+from typing import List, Any
 from aegis.core.state import RetrievedRunbook
 from aegis.config import settings
 
@@ -14,9 +14,27 @@ class JevReranker:
     """
 
     @classmethod
-    async def rerank(cls, incident_symptoms: str, documents: List[RetrievedRunbook]) -> List[RetrievedRunbook]:
+    async def rerank(cls, incident_symptoms: str, documents: List[Any]) -> List[Any]:
         if not documents:
             return []
+
+        def get_id(doc):
+            return doc.doc_id if hasattr(doc, "doc_id") else doc.get("doc_id", "")
+
+        def get_title(doc):
+            return doc.title if hasattr(doc, "title") else doc.get("title", "")
+
+        def get_content(doc):
+            return doc.content if hasattr(doc, "content") else doc.get("content", "")
+
+        def set_score(doc, sc):
+            if hasattr(doc, "score"):
+                doc.score = float(sc)
+            elif isinstance(doc, dict):
+                doc["score"] = float(sc)
+
+        def get_score(doc):
+            return float(getattr(doc, "score", 0.0) if hasattr(doc, "score") else doc.get("score", 0.0))
 
         # --- Tier 1: Live Vercel AI Gateway (typesafe-ai/jev) ---
         vercel_key = os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_AI_GATEWAY_KEY")
@@ -24,9 +42,11 @@ class JevReranker:
             try:
                 questions = {}
                 for d in documents:
-                    questions[f"relevance_{d.doc_id}"] = {
+                    did = get_id(d)
+                    dtitle = get_title(d)
+                    questions[f"relevance_{did}"] = {
                         "type": "boolean",
-                        "instructions": f"Does the document titled '{d.title}' describe the resolution or runbook for these symptoms: '{incident_symptoms}'?"
+                        "instructions": f"Does the document titled '{dtitle}' describe the resolution or runbook for these symptoms: '{incident_symptoms}'?"
                     }
 
                 async with httpx.AsyncClient(timeout=5.0) as client:
@@ -40,7 +60,7 @@ class JevReranker:
                             "model": "typesafe-ai/jev",
                             "state": {
                                 "symptoms": incident_symptoms,
-                                "documents": [{"doc_id": d.doc_id, "title": d.title} for d in documents]
+                                "documents": [{"doc_id": get_id(d), "title": get_title(d)} for d in documents]
                             },
                             "questions": questions
                         }
@@ -48,11 +68,12 @@ class JevReranker:
                     if resp.status_code == 200:
                         answers = resp.json().get("answers", {})
                         for d in documents:
-                            ans = answers.get(f"relevance_{d.doc_id}", {})
+                            did = get_id(d)
+                            ans = answers.get(f"relevance_{did}", {})
                             # Boolean primitive returns probability of true
                             prob = ans.get("probability", ans.get("probabilities", {}).get("true", 0.5))
-                            d.score = float(prob)
-                        documents.sort(key=lambda x: x.score, reverse=True)
+                            set_score(d, prob)
+                        documents.sort(key=get_score, reverse=True)
                         return documents
             except Exception as e:
                 if settings.DEBUG:
@@ -65,7 +86,7 @@ class JevReranker:
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=gemini_key)
-                docs_payload = [{"doc_id": d.doc_id, "title": d.title, "content": d.content} for d in documents]
+                docs_payload = [{"doc_id": get_id(d), "title": get_title(d), "content": get_content(d)} for d in documents]
                 prompt = f"""
                 You are Aegis Operational Knowledge Reranker.
                 Rate the relevance of each operational runbook for the following incident symptoms on a scale of 0.0 to 1.0.
@@ -87,9 +108,10 @@ class JevReranker:
                 scores = json.loads(response.text)
                 score_map = {item["doc_id"]: float(item["score"]) for item in scores if "doc_id" in item and "score" in item}
                 for d in documents:
-                    if d.doc_id in score_map:
-                        d.score = score_map[d.doc_id]
-                documents.sort(key=lambda x: x.score, reverse=True)
+                    did = get_id(d)
+                    if did in score_map:
+                        set_score(d, score_map[did])
+                documents.sort(key=get_score, reverse=True)
                 return documents
             except Exception as e:
                 if settings.DEBUG:
@@ -98,14 +120,15 @@ class JevReranker:
         # --- Tier 3: Local Semantic Keyword Overlap (Safety net) ---
         symptoms_lower = incident_symptoms.lower()
         for d in documents:
-            if "database" in symptoms_lower and "database" in d.title.lower():
-                d.score = 0.95
-            elif "rollback" in symptoms_lower and "rollback" in d.title.lower():
-                d.score = 0.88
+            dtitle_lower = get_title(d).lower()
+            if "database" in symptoms_lower and "database" in dtitle_lower:
+                set_score(d, 0.95)
+            elif "rollback" in symptoms_lower and "rollback" in dtitle_lower:
+                set_score(d, 0.88)
             else:
-                d.score = 0.50
+                set_score(d, 0.50)
 
-        documents.sort(key=lambda x: x.score, reverse=True)
+        documents.sort(key=get_score, reverse=True)
         return documents
 
 jev_reranker = JevReranker()

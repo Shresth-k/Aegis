@@ -12,10 +12,13 @@ from aegis.rag.retriever import runbook_retriever
 from aegis.rag.jev_reranker import jev_reranker
 from aegis.agents.diagnosis import diagnosis_agent
 from aegis.policy.engine import policy_engine
+from aegis.config import settings
 from aegis.executor.needle_executor import needle_executor
 from aegis.acme.client import acme_client
+from aegis.mcp.client import mcp_client
 
 END = "__END__"
+
 
 class AegisStateGraph:
     """
@@ -178,7 +181,10 @@ async def remediate_node(state: IncidentState) -> Dict[str, Any]:
     return {"remediation": remediation, "status": "VERIFYING"}
 
 async def verify_node(state: IncidentState) -> Dict[str, Any]:
-    health_data = await acme_client.get_service_health(state.service)
+    if settings.USE_MCP:
+        health_data = await mcp_client.get_service_health(state.service)
+    else:
+        health_data = await acme_client.get_service_health(state.service)
     is_healthy = health_data.get("healthy", False)
     err_rate = health_data.get("error_rate", 0.0)
     lat_ms = health_data.get("latency_ms", 0.0)

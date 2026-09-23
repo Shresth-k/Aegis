@@ -2,6 +2,7 @@ from typing import Dict, Any
 from pydantic import BaseModel, Field
 from aegis.config import settings
 from aegis.acme.client import acme_client
+from aegis.mcp.client import mcp_client
 
 class RollbackParams(BaseModel):
     service: str = Field(description="Name of the service to rollback")
@@ -47,11 +48,17 @@ class NeedleExecutor:
                 if settings.DEBUG:
                     print(f"[Needle 3 warning] local pass fallback: {e}")
 
-        # 3. Call AcmeCloud API
-        result = await acme_client.rollback_deployment(
-            service=validated.service,
-            target_version=validated.target_version
-        )
+        # 3. Call AcmeCloud API (via MCP or direct client)
+        if settings.USE_MCP:
+            result = await mcp_client.rollback_deployment(
+                service=validated.service,
+                target_version=validated.target_version
+            )
+        else:
+            result = await acme_client.rollback_deployment(
+                service=validated.service,
+                target_version=validated.target_version
+            )
         return result
 
 needle_executor = NeedleExecutor()

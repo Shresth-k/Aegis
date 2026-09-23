@@ -13,3 +13,7 @@ build/
 *.egg-info/
 .agents/
 skills-lock.json
+acmecloud/
+.acme_*.json
+frontend/node_modules/
+frontend/dist/

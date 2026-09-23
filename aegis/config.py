@@ -66,10 +66,18 @@ class Settings(BaseModel):
 
     # AcmeCloud Simulated Enterprise Connectivity
     ACME_CLOUD_API_URL: str = Field(
-        default_factory=lambda: os.getenv("ACME_CLOUD_API_URL", "http://localhost:8000/acme")
+        default_factory=lambda: os.getenv("ACME_CLOUD_API_URL", "http://localhost:8001")
     )
     MOCK_ACME_CLOUD: bool = Field(
         default_factory=lambda: os.getenv("MOCK_ACME_CLOUD", "true").lower() in ("1", "true", "yes")
+    )
+
+    # Model Context Protocol (MCP) Settings
+    USE_MCP: bool = Field(
+        default_factory=lambda: os.getenv("USE_MCP", "true").lower() in ("1", "true", "yes")
+    )
+    MCP_SERVER_TRANSPORT: Literal["direct", "stdio", "sse"] = Field(
+        default_factory=lambda: os.getenv("MCP_SERVER_TRANSPORT", "direct")
     )
 
     # Tracing
