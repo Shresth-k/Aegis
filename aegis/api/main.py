@@ -268,8 +268,7 @@ async def tool_triage_incident(incident_id: str, service: str, state: Optional[I
         "model": "typesafe-ai/jev",
         "endpoint": "https://ai-gateway.vercel.sh/v1/evaluate",
         "primitive": "choice",
-        "latency_ms": elapsed_ms,
-        "tokens": "120t"
+        "latency_ms": elapsed_ms
     }, ["ingest", "triage"]
 
 
@@ -281,7 +280,6 @@ async def tool_get_metrics(service: str, state: Optional[IncidentState] = None, 
     metrics_out = dict(metrics)
     metrics_out["latency_ms"] = elapsed_ms
     metrics_out["source"] = "Prometheus (AcmeCloud Digital Twin / Container)"
-    metrics_out["tokens"] = "290t"
     tracer.log_event(incident_id, "investigate", "EVIDENCE_COLLECTED", {
         "service": service,
         "metrics": metrics_out,
@@ -333,8 +331,7 @@ async def tool_get_service_logs(service: str, state: Optional[IncidentState] = N
         "log_count": len(logs),
         "logs": logs[:5],
         "latency_ms": elapsed_ms,
-        "source": "AcmeCloud FastMCP / Container Logs",
-        "tokens": "310t"
+        "source": "AcmeCloud FastMCP / Container Logs"
     }, ["tool-logs"]
 
 
@@ -360,8 +357,7 @@ async def tool_search_runbooks(query: str, service: str, state: Optional[Inciden
         "query": query,
         "runbooks": result,
         "model": "typesafe-ai/jev (Noul Reranker)",
-        "latency_ms": elapsed_ms,
-        "tokens": "620t"
+        "latency_ms": elapsed_ms
     }, ["knowledge"]
 
 
@@ -396,8 +392,7 @@ async def tool_evaluate_policy(action: str, target_service: str, state: Optional
         "requires_approval": evaluation.requires_approval,
         "reason": evaluation.reason,
         "policy_id": "PROD_ROLLBACK_APPROVAL",
-        "latency_ms": elapsed_ms,
-        "tokens": "140t"
+        "latency_ms": elapsed_ms
     }, ["diagnose", "policy"]
 
 
@@ -408,7 +403,6 @@ async def tool_rollback_deployment(service: str, target_version: str = "2.4.0", 
     elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
     res_out = dict(res)
     res_out["latency_ms"] = elapsed_ms
-    res_out["tokens"] = "860t"
     remediation = RemediationResult(
         action="rollback_deployment",
         target_service=service,
@@ -461,8 +455,7 @@ async def tool_verify_slo(service: str, state: Optional[IncidentState] = None, i
         "latency_ms": lat_ms,
         "verification_latency_ms": elapsed_ms,
         "service_version": current_v,
-        "status": "SUCCESS" if success else "FAILED",
-        "tokens": "240t"
+        "status": "SUCCESS" if success else "FAILED"
     }, ["verify"]
 
 
@@ -1090,7 +1083,16 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                             "output": fres
                         })
                         spawned_nodes.extend(fnodes)
-                        yield ("tool_result", {"name": fname, "output": fres, "node": fnodes[-1] if fnodes else fname})
+                        lat_val = fres.get("latency_ms") if isinstance(fres, dict) else None
+                        src_val = fres.get("source") if isinstance(fres, dict) else None
+                        yield ("tool_result", {
+                            "name": fname,
+                            "output": fres,
+                            "node": fnodes[-1] if fnodes else fname,
+                            "latency_ms": lat_val,
+                            "source": src_val,
+                            "args": fargs
+                        })
                         for nd in fnodes:
                             yield ("node_spawned", {"node_id": nd})
 

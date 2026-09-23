@@ -165,8 +165,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         status: activeNodeId === 'ingest' ? 'RUNNING' : isIngestDone ? 'DONE' : visibleNodeIds.includes('ingest') ? 'RUNNING' : 'PENDING',
         desc: `Ingests alerts and creates incident context for ${state?.service || 'checkout-service'}.`,
         model: 'Webhook Receiver',
-        latency: isIngestDone ? '18ms' : activeNodeId === 'ingest' ? 'Ingesting...' : 'Queued',
-        tokens: '84t'
+        latency: isIngestDone ? '18ms' : activeNodeId === 'ingest' ? 'Ingesting...' : 'Queued'
       },
       {
         id: 'triage',
@@ -175,8 +174,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         status: activeNodeId === 'triage' ? 'RUNNING' : isTriageDone ? 'DONE' : visibleNodeIds.includes('triage') ? 'RUNNING' : 'PENDING',
         desc: `Sub-25ms SLA triage. Enriched topology dependency: ${state?.service || 'checkout'} → ${state?.evidence?.dependencies?.join(', ') || 'postgres:5432'}.`,
         model: 'Jev Heuristic Engine',
-        latency: isTriageDone ? '21.4ms' : activeNodeId === 'triage' ? 'Evaluating...' : 'Queued',
-        tokens: '120t'
+        latency: isTriageDone ? '21.4ms' : activeNodeId === 'triage' ? 'Evaluating...' : 'Queued'
       },
       {
         id: 'probe',
@@ -185,8 +183,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         status: (activeNodeId === 'tool-logs' || activeNodeId === 'tool-metrics') ? 'RUNNING' : isProbeDone ? 'DONE' : (visibleNodeIds.includes('tool-logs') || visibleNodeIds.includes('tool-metrics')) ? 'RUNNING' : 'PENDING',
         desc: 'Dispatched AcmeCloud FastMCP tools get_service_logs and get_metrics.',
         model: 'AcmeCloud FastMCP',
-        latency: isProbeDone ? '119ms' : (activeNodeId === 'tool-logs' || activeNodeId === 'tool-metrics') ? 'Polling MCP...' : 'Queued',
-        tokens: '600t'
+        latency: isProbeDone ? '119ms' : (activeNodeId === 'tool-logs' || activeNodeId === 'tool-metrics') ? 'Polling MCP...' : 'Queued'
       },
       {
         id: 'rag',
@@ -197,8 +194,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
           ? `Matched Runbook ${topRunbook.doc_id} (${topRunbook.title}) with ${(topRunbook.score * 100).toFixed(0)}% confidence.`
           : 'Matched Runbook RB-001 (Database Pool Exhaustion) with 96% vector similarity.',
         model: 'ChromaDB Vector RAG',
-        latency: isRagDone ? '110ms' : activeNodeId === 'knowledge' ? 'Vector Search...' : 'Queued',
-        tokens: '620t'
+        latency: isRagDone ? '110ms' : activeNodeId === 'knowledge' ? 'Vector Search...' : 'Queued'
       },
       {
         id: 'diagnose',
@@ -207,8 +203,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         status: activeNodeId === 'diagnose' ? 'RUNNING' : isDiagDone ? 'DONE' : visibleNodeIds.includes('diagnose') ? 'RUNNING' : 'PENDING',
         desc: diagRootCause ? `Synthesized: ${diagRootCause}` : 'Synthesized root cause through multi-turn Chain-of-Thought reasoning.',
         model: 'AI Model (Reasoning)',
-        latency: isDiagDone ? '640ms' : activeNodeId === 'diagnose' ? 'Synthesizing CoT...' : 'Queued',
-        tokens: '850t'
+        latency: isDiagDone ? '640ms' : activeNodeId === 'diagnose' ? 'Synthesizing CoT...' : 'Queued'
       },
       {
         id: 'policy',
@@ -217,8 +212,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         status: isPendingApproval ? 'GATE' : isPolicyDone ? 'DONE' : activeNodeId === 'policy' ? 'RUNNING' : 'PENDING',
         desc: policyDesc,
         model: 'Aegis Policy Gate',
-        latency: isPolicyDone ? '82ms' : isPendingApproval ? 'Awaiting Sign-off' : activeNodeId === 'policy' ? 'Evaluating Rule...' : 'Queued',
-        tokens: '140t'
+        latency: isPolicyDone ? '82ms' : isPendingApproval ? 'Awaiting Sign-off' : activeNodeId === 'policy' ? 'Evaluating Rule...' : 'Queued'
       },
       {
         id: 'remediate',
@@ -227,8 +221,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         status: status === 'RESOLVED' ? 'RESOLVED' : (status === 'REMEDIATING' || activeNodeId === 'remediate' || activeNodeId === 'verify') ? 'RUNNING' : 'PENDING',
         desc: state?.remediation?.message || 'Executes container rollback to v2.4.0 and monitors Prometheus SLO metrics.',
         model: 'Docker Compose / AcmeCloud',
-        latency: status === 'RESOLVED' ? '410ms' : (status === 'REMEDIATING' || activeNodeId === 'remediate') ? 'Executing...' : 'Queued',
-        tokens: '860t'
+        latency: status === 'RESOLVED' ? '410ms' : (status === 'REMEDIATING' || activeNodeId === 'remediate') ? 'Executing...' : 'Queued'
       },
       // Dynamically append any parallel workers or arbitrary custom agent nodes
       ...visibleNodeIds
@@ -243,8 +236,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
             status: activeNodeId === wId ? 'RUNNING' : 'DONE',
             desc: `Concurrent worker thread ${num} executing isolated telemetry probe partition.`,
             model: 'FastMCP Worker Partition',
-            latency: '48ms',
-            tokens: '280t'
+            latency: '48ms'
           };
         })
     ];
@@ -350,6 +342,16 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                 setChatMessages((prev) =>
                   prev.map((m) => (m.id === assistantId ? { ...m, toolCalls: [...currentTools] } : m))
                 );
+                onChatResponse?.({
+                  tool_result: {
+                    name: ev.name,
+                    output: ev.output,
+                    node: ev.node,
+                    latency_ms: ev.latency_ms || ev.output?.latency_ms,
+                    source: ev.source || ev.output?.source,
+                    args: ev.args
+                  }
+                });
               } else if (ev.type === 'node_spawned') {
                 if (ev.node_id) {
                   onChatResponse?.({ new_nodes: [ev.node_id] });
@@ -787,7 +789,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                   <div className="flex items-center justify-between pt-1 border-t border-[#27272a]/60 text-[10px] font-mono text-zinc-500">
                     <span>{agent.model}</span>
                     <span className={isRunning ? 'text-white font-medium' : isDone ? 'text-zinc-400' : 'text-zinc-600'}>
-                      {agent.latency} {agent.tokens && isDone ? `· ${agent.tokens}` : ''}
+                      {agent.latency}
                     </span>
                   </div>
                 </div>
