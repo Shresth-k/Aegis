@@ -1,19 +1,31 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
-.env
-traces.jsonl
-*.log
+.ruff_cache/
+**/.pytest_cache/
+**/__pycache__/
+**/.ruff_cache/
+**/.venv/
 .venv/
 venv/
 dist/
 build/
 *.egg-info/
+
+# Environment files and secrets
+.env
+.env.local
+*.log
+traces.jsonl
+.acme_*.json
+
+# Agent & temporary files
 .agents/
 skills-lock.json
-acmecloud/
-.acme_*.json
+
+# Frontend
 frontend/node_modules/
 frontend/dist/

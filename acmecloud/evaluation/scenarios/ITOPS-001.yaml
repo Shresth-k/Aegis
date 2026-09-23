@@ -1,0 +1,29 @@
+# Canonical Phase 3 scenario from the OpsPilot master specification.
+#
+# This file is declarative evaluation data. It does not execute a scenario
+# and must not be treated as operational incident evidence.
+
+scenario_id: ITOPS-001
+
+service: checkout-service
+
+initial_version: 2.4.0
+
+fault:
+  type: bad_deployment
+  version: 2.4.1
+
+traffic:
+  requests_per_second: 100
+
+expected_root_cause: bad_deployment
+
+expected_action:
+  type: rollback
+  target_version: 2.4.0
+
+approval_required: true
+
+expected_final_state:
+  service_version: 2.4.0
+  service_health: healthy
