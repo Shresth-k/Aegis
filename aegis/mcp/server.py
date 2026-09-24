@@ -101,6 +101,26 @@ _DEFAULT_INCIDENTS: Dict[str, Dict[str, Any]] = {
         "created_at": "2026-09-21T11:30:00Z",
         "active_version": "2.4.1",
     },
+    "INC-002": {
+        "incident_id": "INC-002",
+        "service": "payment-gateway",
+        "environment": "production",
+        "severity": "P1",
+        "status": "OPEN",
+        "summary": "Payment gateway socket timeout and upstream circuit breaker open.",
+        "created_at": "2026-09-21T12:00:00Z",
+        "active_version": "2.4.4",
+    },
+    "INC-003": {
+        "incident_id": "INC-003",
+        "service": "inventory-service",
+        "environment": "production",
+        "severity": "P2",
+        "status": "OPEN",
+        "summary": "Elevated Redis memory pressure and cache eviction cascade.",
+        "created_at": "2026-09-21T12:15:00Z",
+        "active_version": "2.4.2",
+    },
 }
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

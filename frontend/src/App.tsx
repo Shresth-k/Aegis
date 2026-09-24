@@ -3,6 +3,7 @@ import { TopBar } from './components/TopBar';
 import { WorkflowCanvas } from './components/WorkflowCanvas';
 import { AgentStreamPanel } from './components/AgentStreamPanel';
 import { AcmeCloudConsole } from './components/AcmeCloudConsole';
+import { AcmeStorefront } from './components/AcmeStorefront';
 import { IncidentState, TraceEvent } from './types';
 
 export default function App() {
@@ -22,7 +23,14 @@ export default function App() {
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<number>(0);
-  const [activeView, setActiveView] = useState<'aegis' | 'acmecloud'>('aegis');
+  const [activeView, setActiveView] = useState<'aegis' | 'acmecloud' | 'store'>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.port === '3002' || window.location.pathname.startsWith('/store')) {
+        return 'store';
+      }
+    }
+    return 'aegis';
+  });
   const [acmecloudVersion, setAcmecloudVersion] = useState<string>('2.4.0');
   const [acmecloudHealthy, setAcmecloudHealthy] = useState<boolean>(true);
 
@@ -446,6 +454,9 @@ export default function App() {
         currentIncidentId={currentIncidentId}
         onSelectIncident={(id) => {
           setCurrentIncidentId(id);
+          setVisibleNodeIds([]);
+          setActiveNodeId(null);
+          setSelectedNodeId(null);
           setSessionKey((prev) => prev + 1);
           fetchIncident(id);
         }}
@@ -455,8 +466,10 @@ export default function App() {
         acmecloudHealthy={acmecloudHealthy}
       />
 
-      {/* 2. Main Workspace (Aegis Workflow Canvas + Agent Stream OR AcmeCloud Console) */}
-      {activeView === 'acmecloud' ? (
+      {/* 2. Main Workspace (Aegis Workflow Canvas + Agent Stream OR Acme Store OR AcmeCloud Console) */}
+      {activeView === 'store' ? (
+        <AcmeStorefront onOpenAegis={() => setActiveView('aegis')} />
+      ) : activeView === 'acmecloud' ? (
         <AcmeCloudConsole
           onSwitchToAegis={() => setActiveView('aegis')}
           onDeploySuccess={handleAcmeDeploySuccess}

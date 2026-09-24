@@ -1,5 +1,5 @@
 import React from 'react';
-import { Share2, Search, AlertCircle, Check, Server, Bot } from 'lucide-react';
+import { Share2, Search, AlertCircle, Check, Server, Bot, ShoppingBag, ExternalLink } from 'lucide-react';
 import { IncidentState } from '../types';
 
 interface TopBarProps {
@@ -10,8 +10,8 @@ interface TopBarProps {
   incidents?: Array<{ incident_id: string; title: string; service: string; severity: string; status: string }>;
   currentIncidentId?: string;
   onSelectIncident?: (incidentId: string) => void;
-  activeView?: 'aegis' | 'acmecloud';
-  onToggleView?: (view: 'aegis' | 'acmecloud') => void;
+  activeView?: 'aegis' | 'acmecloud' | 'store';
+  onToggleView?: (view: 'aegis' | 'acmecloud' | 'store') => void;
   acmecloudVersion?: string;
   acmecloudHealthy?: boolean;
 }
@@ -119,15 +119,29 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
 
         <button
+          onClick={() => onToggleView?.('store')}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
+            activeView === 'store'
+              ? 'bg-[#27272a] text-white font-medium shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+          title="Open Acme Hardware Store (Port 3002)"
+        >
+          <ShoppingBag className="w-3.5 h-3.5 text-zinc-300" />
+          <span>Acme Store (Port 3002)</span>
+        </button>
+
+        <button
           onClick={() => onToggleView?.('acmecloud')}
           className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
             activeView === 'acmecloud'
               ? 'bg-[#27272a] text-white font-medium shadow-sm'
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
+          title="Open AcmeCloud Engineering Console"
         >
           <Server className="w-3.5 h-3.5 text-zinc-300" />
-          <span>AcmeCloud Console</span>
+          <span>DevOps Console</span>
         </button>
       </div>
 

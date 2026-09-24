@@ -2045,6 +2045,87 @@ async def toggle_acmecloud_traffic(enable: Optional[bool] = None):
     return {"status": "NOOP", "traffic_running": _traffic_running}
 
 
+class StoreCheckoutRequest(BaseModel):
+    customer_id: str = "00000000-0000-0000-0000-000000000001"
+    total_amount: float = 2899.00
+    currency: str = "USD"
+    items: Optional[List[Dict[str, Any]]] = None
+
+
+@app.post("/api/store/checkout")
+async def store_checkout(req: StoreCheckoutRequest):
+    """
+    Client-facing checkout endpoint for the Acme Storefront.
+    Attempts live HTTP POST to checkout-service on port 8001.
+    If live container fails or is in simulated fault mode, returns the exact fault behavior.
+    """
+    health = await acme_client.get_service_health("checkout-service")
+    active_version = health.get("version", "2.4.0")
+
+    # 1. Attempt live Docker container checkout if available
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.post("http://localhost:8001/checkout", json={
+                "customer_id": req.customer_id,
+                "total_amount": req.total_amount,
+                "currency": req.currency
+            })
+            if resp.status_code == 201:
+                return {
+                    "status": "CONFIRMED",
+                    "order_id": resp.json().get("order_id", f"ord-{int(time.time()*1000)}"),
+                    "version": active_version,
+                    "execution_mode": "LIVE_DOCKER_CONTAINER",
+                    "message": "Order successfully persisted in Acme PostgreSQL database."
+                }
+            elif resp.status_code >= 500:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=f"Acme Checkout Backend Error: HTTP {resp.status_code} on version {active_version}."
+                )
+    except httpx.RequestError:
+        pass
+
+    # 2. Simulated Fault Scenarios based on active build version
+    if active_version == "2.4.1":
+        await asyncio.sleep(1.8)
+        raise HTTPException(
+            status_code=500,
+            detail="HTTP 500 DatabaseTimeout: Unable to acquire connection from pool (limit=5 reached under load). Checkout persistence failed."
+        )
+    elif active_version == "2.4.2":
+        await asyncio.sleep(1.4)
+        return {
+            "status": "CONFIRMED",
+            "order_id": f"ord-{int(time.time()*1000)}",
+            "version": active_version,
+            "warning": "High latency detected: GC pause duration 1850ms due to 94.2% heap allocation.",
+            "execution_mode": "SIMULATED_COMMERCE",
+            "message": "Order confirmed with elevated response latency."
+        }
+    elif active_version == "2.4.3":
+        await asyncio.sleep(2.5)
+        raise HTTPException(
+            status_code=504,
+            detail="HTTP 504 Gateway Timeout: PostgreSQL transaction ExclusiveLock wait timeout exceeded (7500ms) on orders table."
+        )
+    elif active_version == "2.4.4":
+        await asyncio.sleep(0.3)
+        raise HTTPException(
+            status_code=502,
+            detail="HTTP 502 Bad Gateway: Upstream payment processor payment-gw.internal.invalid:9999 connection refused."
+        )
+
+    # 3. Default nominal baseline (v2.4.0)
+    return {
+        "status": "CONFIRMED",
+        "order_id": f"ord-{int(time.time()*1000)}",
+        "version": active_version,
+        "execution_mode": "NOMINAL_BASELINE",
+        "message": "Order confirmed and processed successfully in PostgreSQL."
+    }
+
+
 @app.post("/api/chaos/inject")
 async def inject_chaos(service: str = "checkout-service", version: str = "2.4.1"):
     """Inject faulty deployment build."""
