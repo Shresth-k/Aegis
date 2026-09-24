@@ -28,6 +28,7 @@ services:
       context: .
       dockerfile: simulator/services/checkout/Dockerfile
     container_name: acmecloud-checkout
+    restart: unless-stopped
     env_file:
       - ./simulator/deployments/checkout-service/${CHECKOUT_VERSION:-2.4.0}.env
     environment:
