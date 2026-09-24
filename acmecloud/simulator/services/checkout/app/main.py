@@ -19,7 +19,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.responses import Response
+from starlette.responses import HTMLResponse, Response
 
 from .config import get_service_settings, get_settings
 from .db import get_db
@@ -39,6 +39,52 @@ app = FastAPI(
     version=SERVICE_VERSION,
     description="Checkout API belonging to the simulated AcmeCloud environment.",
 )
+
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return HTMLResponse(
+        """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AcmeCloud Checkout Microservice</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 40px; display: flex; justify-content: center; align-items: center; min-height: 80vh; }
+        .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 36px; max-width: 580px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+        h1 { margin-top: 12px; color: #60a5fa; font-size: 24px; font-weight: 700; }
+        p { color: #9ca3af; line-height: 1.6; font-size: 14px; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 600; background: #064e3b; color: #34d399; }
+        .btn-group { margin-top: 24px; display: flex; gap: 12px; }
+        .btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 20px; border-radius: 8px; background: #2563eb; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; cursor: pointer; border: none; }
+        .btn:hover { background: #1d4ed8; }
+        .btn-sec { background: #1f2937; color: #93c5fd; border: 1px solid #374151; }
+        .btn-sec:hover { background: #374151; }
+        .meta-box { margin-top: 24px; border-top: 1px solid #1f2937; padding-top: 16px; display: flex; justify-content: space-between; font-size: 13px; color: #6b7280; }
+        .meta-box a { color: #60a5fa; text-decoration: none; }
+        .meta-box a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <span class="badge">ACTIVE MICROSERVICE</span>
+        <h1>AcmeCloud Checkout Service</h1>
+        <p>This is the backend checkout microservice running in the cloud environment. It exposes endpoints for checkout transactions, database state, and telemetry metrics.</p>
+        <p>To view the <strong>Aegis Autonomous IT Operations Mission Control UI</strong>, please navigate to port <strong>3000</strong>.</p>
+        <div class="btn-group">
+            <a href="#" onclick="location.port='3000'; return false;" class="btn">Open Aegis Mission Control (Port 3000)</a>
+            <a href="/docs" class="btn btn-sec">API Docs (Swagger UI)</a>
+        </div>
+        <div class="meta-box">
+            <span>Version: <strong>2.4.0</strong></span>
+            <div>
+                <a href="/health">Health Status</a> &bull;
+                <a href="/metrics">Prometheus Metrics</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+    )
 
 configure_logging()
 logger = logging.getLogger(__name__)
