@@ -393,23 +393,34 @@ export default function App() {
     }
   };
 
+  const lastSeenVersionRef = useRef<string>('2.4.0');
+
   // Fetch AcmeCloud infrastructure status
   const fetchAcmeCloudStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/acmecloud/status');
       if (res.ok) {
         const data = await res.json();
-        setAcmecloudVersion(data.current_version || '2.4.0');
+        const newVer = data.current_version || '2.4.0';
+        setAcmecloudVersion(newVer);
         setAcmecloudHealthy(data.is_healthy ?? true);
+
+        // If deployment version changed (e.g. injected or rolled back from Acme Store), auto-sync Aegis
+        if (lastSeenVersionRef.current !== newVer) {
+          lastSeenVersionRef.current = newVer;
+          fetchIncident(currentIncidentId, false);
+          fetchTraces(currentIncidentId);
+          fetchIncidents();
+        }
       }
     } catch (err) {
       console.warn('Failed to fetch AcmeCloud status:', err);
     }
-  }, []);
+  }, [currentIncidentId]);
 
   useEffect(() => {
     fetchAcmeCloudStatus();
-    const interval = setInterval(fetchAcmeCloudStatus, 3500);
+    const interval = setInterval(fetchAcmeCloudStatus, 3000);
     return () => clearInterval(interval);
   }, [fetchAcmeCloudStatus]);
 

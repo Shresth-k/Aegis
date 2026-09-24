@@ -1871,6 +1871,11 @@ async def _deploy_build(service: str = "checkout-service", version: str = "2.4.1
             "version": "2.4.0",
             "health": "RESTORED"
         })
+        tracer.log_event("INC-001", "chaos", "CHAOS_RESET", {
+            "service": service,
+            "version": "2.4.0",
+            "health": "RESTORED"
+        })
 
         # Register healthy requests to Prometheus
         try:
@@ -1896,6 +1901,8 @@ async def _deploy_build(service: str = "checkout-service", version: str = "2.4.1
                 if inc_dict.get("service") == service:
                     inc_dict["status"] = "RESOLVED"
                     inc_dict["active_version"] = "2.4.0"
+                    if inc_id in INCIDENTS:
+                        INCIDENTS[inc_id].status = "RESOLVED"
             _save_incidents(mcp_data)
         except Exception as e:
             print(f"Warning: could not save MCP incidents: {e}")
@@ -1915,6 +1922,12 @@ async def _deploy_build(service: str = "checkout-service", version: str = "2.4.1
             "service": service,
             "version": version,
             "fault": build_meta["title"]
+        })
+        tracer.log_event("INC-001", "chaos", "CHAOS_INJECTED", {
+            "service": service,
+            "version": version,
+            "fault": build_meta["title"],
+            "severity": build_meta["target_incident_severity"]
         })
 
         if _traffic_task and not _traffic_task.done():
@@ -1944,6 +1957,15 @@ async def _deploy_build(service: str = "checkout-service", version: str = "2.4.1
                     inc_dict["summary"] = build_meta["title"]
                     if "resolved_at" in inc_dict:
                         del inc_dict["resolved_at"]
+                    # Also populate in-memory INCIDENTS store
+                    INCIDENTS[inc_id] = IncidentState(
+                        incident_id=inc_id,
+                        service=service,
+                        severity=build_meta["target_incident_severity"],
+                        title=f"{build_meta['title']} on {service}",
+                        description=build_meta["description"],
+                        status="OPEN"
+                    )
             _save_incidents(mcp_data)
         except Exception as e:
             print(f"Warning: could not save MCP incidents: {e}")
