@@ -71,6 +71,9 @@ class Settings(BaseModel):
     MOCK_ACME_CLOUD: bool = Field(
         default_factory=lambda: os.getenv("MOCK_ACME_CLOUD", "true").lower() in ("1", "true", "yes")
     )
+    PROMETHEUS_URL: str = Field(
+        default_factory=lambda: os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+    )
 
     # Model Context Protocol (MCP) Settings
     USE_MCP: bool = Field(

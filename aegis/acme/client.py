@@ -229,17 +229,18 @@ class AcmeClient:
         errors_total = 0
         active_db = 0
 
+        prom_url = getattr(settings, "PROMETHEUS_URL", "http://localhost:9090").rstrip("/")
         async with httpx.AsyncClient(timeout=0.5) as client:
             try:
                 # 1. Total errors
-                err_resp = await client.get("http://localhost:9090/api/v1/query?query=sum(checkout_errors_total)")
+                err_resp = await client.get(f"{prom_url}/api/v1/query?query=sum(checkout_errors_total)")
                 if err_resp.status_code == 200:
                     results = err_resp.json().get("data", {}).get("result", [])
                     if results:
                         errors_total = float(results[0].get("value", [0, 0])[1])
 
                 # 2. Total requests
-                req_resp = await client.get("http://localhost:9090/api/v1/query?query=sum(checkout_requests_total)")
+                req_resp = await client.get(f"{prom_url}/api/v1/query?query=sum(checkout_requests_total)")
                 if req_resp.status_code == 200:
                     results = req_resp.json().get("data", {}).get("result", [])
                     if results:
@@ -249,7 +250,7 @@ class AcmeClient:
                     error_rate = round(errors_total / requests_total, 4)
 
                 # 3. Active DB connections
-                db_resp = await client.get("http://localhost:9090/api/v1/query?query=db_connections_active")
+                db_resp = await client.get(f"{prom_url}/api/v1/query?query=db_connections_active")
                 if db_resp.status_code == 200:
                     results = db_resp.json().get("data", {}).get("result", [])
                     if results:

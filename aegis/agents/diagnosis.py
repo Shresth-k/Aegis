@@ -67,11 +67,14 @@ class DiagnosisAgent:
                     )
                 )
 
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=settings.LLM_MODEL,
-                    contents=prompt,
-                    config=config
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.models.generate_content,
+                        model=settings.LLM_MODEL,
+                        contents=prompt,
+                        config=config
+                    ),
+                    timeout=5.0
                 )
                 data = json.loads(response.text)
                 if data.get("recommended_action") not in {"rollback_deployment", "restart_service", "escalate_to_human"}:

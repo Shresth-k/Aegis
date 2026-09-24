@@ -1065,11 +1065,14 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
 
             yield ("thinking", {"thinking": f"Analyzing operator intent for {service_name} with AI Reasoning Engine..."})
 
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=settings.LLM_MODEL,
-                contents=contents,
-                config=config
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=settings.LLM_MODEL,
+                    contents=contents,
+                    config=config
+                ),
+                timeout=5.0
             )
 
             policy_gate_data: Optional[Dict[str, Any]] = None
@@ -1210,11 +1213,14 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     tool_response_content = types.Content(role="user", parts=function_response_parts)
                     contents.extend([model_call_content, tool_response_content])
 
-                    response = await asyncio.to_thread(
-                        client.models.generate_content,
-                        model=settings.LLM_MODEL,
-                        contents=contents,
-                        config=config
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            client.models.generate_content,
+                            model=settings.LLM_MODEL,
+                            contents=contents,
+                            config=config
+                        ),
+                        timeout=5.0
                     )
 
                 final_reply = response.text or ""
@@ -1226,11 +1232,14 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                             system_instruction=system_prompt,
                             thinking_config=types.ThinkingConfig(thinking_level="low")
                         )
-                        synth_response = await asyncio.to_thread(
-                            client.models.generate_content,
-                            model=settings.LLM_MODEL,
-                            contents=contents,
-                            config=config_synthesis
+                        synth_response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                client.models.generate_content,
+                                model=settings.LLM_MODEL,
+                                contents=contents,
+                                config=config_synthesis
+                            ),
+                            timeout=5.0
                         )
                         if synth_response.text and len(synth_response.text.strip()) > 10:
                             final_reply = synth_response.text

@@ -20,19 +20,23 @@ class JevTriage:
             domain: "database" | "deployment" | "network" | "application"
             confidence: float (0.0 to 1.0)
         """
-        # --- Tier 1: Vercel AI Gateway (typesafe-ai/jev) ---
+        # --- Tier 1: Direct TypeSafe AI or Vercel AI Gateway (typesafe-ai/jev) ---
+        typesafe_key = os.getenv("TYPESAFE_API_KEY")
         vercel_key = os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_AI_GATEWAY_KEY")
-        if vercel_key:
+        active_key = typesafe_key or vercel_key
+        if active_key:
+            target_url = "https://api.typesafe.ai/v1/systemone" if typesafe_key else "https://ai-gateway.vercel.sh/v1/evaluate"
+            target_model = "jev-latest" if typesafe_key else "typesafe-ai/jev"
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     resp = await client.post(
-                        "https://ai-gateway.vercel.sh/v1/evaluate",
+                        target_url,
                         headers={
-                            "Authorization": f"Bearer {vercel_key}",
+                            "Authorization": f"Bearer {active_key}",
                             "Content-Type": "application/json"
                         },
                         json={
-                            "model": "typesafe-ai/jev",
+                            "model": target_model,
                             "state": {
                                 "title": title,
                                 "description": description,
