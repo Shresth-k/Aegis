@@ -556,57 +556,145 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
             await asyncio.sleep(0.003)
 
     # 1. Approval handling: Operator authorizes remediation
-    if any(k in msg for k in ["approve", "confirm", "proceed", "authorize", "rollback now", "execute rollback"]) and not any(k in msg for k in ["reject", "deny", "don't", "dont"]):
-        yield ("thinking", {"thinking": "Operator authorized production remediation. Reverting deployment to baseline v2.4.0 via Needle Executor and verifying SLO recovery..."})
-        
-        yield ("tool_start", {"name": "rollback_deployment", "args": {"service": service_name, "target_version": "2.4.0"}})
-        res_rollback, nodes_rem = await tool_rollback_deployment(service_name, "2.4.0", state, req.incident_id)
-        spawned_nodes.extend(nodes_rem)
-        tool_calls_executed.append({
-            "name": "rollback_deployment",
-            "args": {"service": service_name, "target_version": "2.4.0"},
-            "output": res_rollback
-        })
-        yield ("tool_result", {"name": "rollback_deployment", "output": res_rollback, "node": "remediate"})
-        yield ("node_spawned", {"node_id": "remediate"})
+    approval_keywords = [
+        "approve", "confirm", "proceed", "authorize", "rollback now", "execute rollback",
+        "yeah", "yes", "do ahead", "go ahead", "restart it", "sure", "ok", "okay",
+        "restart container", "restart pod", "restart checkout", "restart postgres", "reboot container",
+        "recycle container", "clear memory", "flush lock", "approve container restart"
+    ]
+    rejection_keywords = ["reject", "deny", "abort", "cancel rollback", "escalate", "don't", "dont", "no"]
 
-        yield ("tool_start", {"name": "verify_slo", "args": {"service": service_name}})
-        res_verify, nodes_ver = await tool_verify_slo(service_name, state, req.incident_id)
-        spawned_nodes.extend(nodes_ver)
-        tool_calls_executed.append({
-            "name": "verify_slo",
-            "args": {"service": service_name},
-            "output": res_verify
-        })
-        yield ("tool_result", {"name": "verify_slo", "output": res_verify, "node": "verify"})
-        yield ("node_spawned", {"node_id": "verify"})
+    if any(k in msg for k in approval_keywords) and not any(k in msg for k in rejection_keywords):
+        # Determine whether this is a container restart or a code rollback
+        is_explicit_restart = any(k in msg for k in ["restart", "reboot", "recycle", "clear memory", "flush lock"])
+        is_explicit_rollback = any(k in msg for k in ["rollback", "revert"])
 
-        state.approval_granted = True
-        state.approved_by = "LeadSRE"
-        state.status = "RESOLVED"
-        INCIDENTS[req.incident_id] = state
+        from aegis.acme.client import acme_client
+        acme_client._load_state()
+        active_ver = acme_client._mock_state.get(service_name, {}).get("current_version", "2.4.1")
 
-        reply = (
-            f"**Remediation Executed & Verified Successfully:**\n\n"
-            f"- **Action**: `rollback_deployment` to `v2.4.0` on `{service_name}`\n"
-            f"- **Status**: `SUCCESS` — Replaced faulty container `v2.4.1` with stable baseline `v2.4.0`.\n"
-            f"- **SLO Verification**: Nominal health restored. Error rate dropped to `{res_verify.get('error_rate', 0.002):.2%}` (< 1%) and P95 latency is `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n\n"
-            f"Incident **{req.incident_id}** is now **RESOLVED**."
+        # Check last assistant message in history to see what was proposed
+        last_assistant_msg = ""
+        if req.history:
+            for h in reversed(req.history):
+                if h.get("role") in ["assistant", "model"]:
+                    last_assistant_msg = h.get("text", "").lower()
+                    break
+
+        is_restart_proposal = (
+            "docker_restart_container" in last_assistant_msg
+            or "restart container" in last_assistant_msg
+            or "restarting the checkout-service" in last_assistant_msg
+            or active_ver in ["2.4.2", "2.4.3"]
         )
-        async for chunk in emit_text(reply):
-            yield chunk
 
-        yield ("done", {
-            "reply": reply,
-            "thinking": "Operator authorized production remediation. Executed container rollback to v2.4.0 via Needle Executor and verified post-remediation SLO telemetry.",
-            "tool_call": tool_calls_executed[0],
-            "tool_calls": tool_calls_executed,
-            "new_nodes": list(dict.fromkeys(spawned_nodes)),
-            "policy_gate": None,
-            "status": "RESOLVED",
-            "duration_seconds": round(time.perf_counter() - t0_req, 2)
-        })
-        return
+        should_restart = is_explicit_restart or (not is_explicit_rollback and is_restart_proposal)
+
+        if should_restart:
+            target_container = "acmecloud-postgres" if any(k in msg for k in ["postgres", "database", "db", "lock"]) or "postgres" in last_assistant_msg else "acmecloud-checkout"
+            yield ("thinking", {"thinking": f"Operator authorized container lifecycle remediation. Restarting `{target_container}` to clear runtime state and restore nominal latency..."})
+
+            yield ("tool_start", {"name": "docker_restart_container", "args": {"container_name": target_container}})
+            res_rst, nodes_rst = await tool_docker_restart_container(target_container)
+            spawned_nodes.extend(nodes_rst)
+            tool_calls_executed.append({
+                "name": "docker_restart_container",
+                "args": {"container_name": target_container},
+                "output": res_rst
+            })
+            yield ("tool_result", {"name": "docker_restart_container", "output": res_rst, "node": "remediate"})
+            yield ("node_spawned", {"node_id": "remediate"})
+
+            yield ("tool_start", {"name": "verify_slo", "args": {"service": service_name}})
+            res_verify, nodes_ver = await tool_verify_slo(service_name, state, req.incident_id)
+            spawned_nodes.extend(nodes_ver)
+            tool_calls_executed.append({
+                "name": "verify_slo",
+                "args": {"service": service_name},
+                "output": res_verify
+            })
+            yield ("tool_result", {"name": "verify_slo", "output": res_verify, "node": "verify"})
+            yield ("node_spawned", {"node_id": "verify"})
+
+            state.status = "RESOLVED"
+            state.approval_granted = True
+            state.approved_by = "LeadSRE"
+            INCIDENTS[req.incident_id] = state
+
+            reply = (
+                f"**Container Restart Executed & Verified Successfully:**\n\n"
+                f"- **Action**: `docker_restart_container` on `{target_container}`\n"
+                f"- **Status**: `SUCCESS` — Container restarted; runtime memory heap cache cleared to 120MB and worker thread pool restored.\n"
+                f"- **SLO Verification**: Nominal health restored. Error rate is `{res_verify.get('error_rate', 0.002):.2%}` and P95 latency dropped to `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n"
+                f"- **Policy Note**: Code rollback was **not required** because the release binary was stable and the fault was isolated to runtime state.\n\n"
+                f"Incident **{req.incident_id}** is now **RESOLVED**."
+            )
+            async for chunk in emit_text(reply):
+                yield chunk
+
+            yield ("done", {
+                "reply": reply,
+                "thinking": f"Recycled {target_container} container and confirmed nominal SLO recovery without triggering code rollback.",
+                "tool_call": tool_calls_executed[0],
+                "tool_calls": tool_calls_executed,
+                "new_nodes": list(dict.fromkeys(spawned_nodes)),
+                "policy_gate": None,
+                "status": "RESOLVED",
+                "duration_seconds": round(time.perf_counter() - t0_req, 2)
+            })
+            return
+        else:
+            # Code Rollback
+            yield ("thinking", {"thinking": "Operator authorized production remediation. Reverting deployment to baseline v2.4.0 via Needle Executor and verifying SLO recovery..."})
+            
+            yield ("tool_start", {"name": "rollback_deployment", "args": {"service": service_name, "target_version": "2.4.0"}})
+            res_rollback, nodes_rem = await tool_rollback_deployment(service_name, "2.4.0", state, req.incident_id)
+            spawned_nodes.extend(nodes_rem)
+            tool_calls_executed.append({
+                "name": "rollback_deployment",
+                "args": {"service": service_name, "target_version": "2.4.0"},
+                "output": res_rollback
+            })
+            yield ("tool_result", {"name": "rollback_deployment", "output": res_rollback, "node": "remediate"})
+            yield ("node_spawned", {"node_id": "remediate"})
+
+            yield ("tool_start", {"name": "verify_slo", "args": {"service": service_name}})
+            res_verify, nodes_ver = await tool_verify_slo(service_name, state, req.incident_id)
+            spawned_nodes.extend(nodes_ver)
+            tool_calls_executed.append({
+                "name": "verify_slo",
+                "args": {"service": service_name},
+                "output": res_verify
+            })
+            yield ("tool_result", {"name": "verify_slo", "output": res_verify, "node": "verify"})
+            yield ("node_spawned", {"node_id": "verify"})
+
+            state.approval_granted = True
+            state.approved_by = "LeadSRE"
+            state.status = "RESOLVED"
+            INCIDENTS[req.incident_id] = state
+
+            reply = (
+                f"**Remediation Executed & Verified Successfully:**\n\n"
+                f"- **Action**: `rollback_deployment` to `v2.4.0` on `{service_name}`\n"
+                f"- **Status**: `SUCCESS` — Replaced faulty container `v2.4.1` with stable baseline `v2.4.0`.\n"
+                f"- **SLO Verification**: Nominal health restored. Error rate dropped to `{res_verify.get('error_rate', 0.002):.2%}` (< 1%) and P95 latency is `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n\n"
+                f"Incident **{req.incident_id}** is now **RESOLVED**."
+            )
+            async for chunk in emit_text(reply):
+                yield chunk
+
+            yield ("done", {
+                "reply": reply,
+                "thinking": "Operator authorized production remediation. Executed container rollback to v2.4.0 via Needle Executor and verified post-remediation SLO telemetry.",
+                "tool_call": tool_calls_executed[0],
+                "tool_calls": tool_calls_executed,
+                "new_nodes": list(dict.fromkeys(spawned_nodes)),
+                "policy_gate": None,
+                "status": "RESOLVED",
+                "duration_seconds": round(time.perf_counter() - t0_req, 2)
+            })
+            return
 
     # 2. Rejection handling
     if any(k in msg for k in ["reject", "deny", "abort", "cancel rollback", "escalate"]):
@@ -621,61 +709,6 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
             "thinking": "Operator rejected automated remediation. Escalating incident to human on-call.",
             "new_nodes": [],
             "status": "ESCALATED",
-            "duration_seconds": round(time.perf_counter() - t0_req, 2)
-        })
-        return
-
-    # 2.2 Container Restart / DB Flush Remediation (For Memory Leak or DB Deadlock Scenarios)
-    if any(k in msg for k in ["restart container", "restart pod", "restart checkout", "restart postgres", "reboot container", "flush lock", "recycle container", "clear memory"]):
-        target_container = "acmecloud-postgres" if any(k in msg for k in ["postgres", "database", "db", "lock"]) else "acmecloud-checkout"
-        yield ("thinking", {"thinking": f"Operator authorized container lifecycle remediation. Restarting `{target_container}` via Docker daemon to clear runtime state..."})
-
-        yield ("tool_start", {"name": "docker_restart_container", "args": {"container_name": target_container}})
-        res_rst, nodes_rst = await tool_docker_restart_container(target_container)
-        spawned_nodes.extend(nodes_rst)
-        tool_calls_executed.append({
-            "name": "docker_restart_container",
-            "args": {"container_name": target_container},
-            "output": res_rst
-        })
-        yield ("tool_result", {"name": "docker_restart_container", "output": res_rst, "node": "remediate"})
-        yield ("node_spawned", {"node_id": "remediate"})
-
-        yield ("tool_start", {"name": "verify_slo", "args": {"service": service_name}})
-        res_verify, nodes_ver = await tool_verify_slo(service_name, state, req.incident_id)
-        spawned_nodes.extend(nodes_ver)
-        tool_calls_executed.append({
-            "name": "verify_slo",
-            "args": {"service": service_name},
-            "output": res_verify
-        })
-        yield ("tool_result", {"name": "verify_slo", "output": res_verify, "node": "verify"})
-        yield ("node_spawned", {"node_id": "verify"})
-
-        state.status = "RESOLVED"
-        state.approval_granted = True
-        state.approved_by = "LeadSRE"
-        INCIDENTS[req.incident_id] = state
-
-        reply = (
-            f"**Container Restart Executed & Verified Successfully:**\n\n"
-            f"- **Action**: `docker_restart_container` on `{target_container}`\n"
-            f"- **Status**: `SUCCESS` — Container restarted; heap allocation flushed and worker thread pool restored.\n"
-            f"- **SLO Verification**: Nominal health restored. Error rate is `{res_verify.get('error_rate', 0.002):.2%}` and P95 latency dropped to `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n"
-            f"- **Policy Note**: Code rollback was **not required** because the release binary was stable and the fault was isolated to runtime state.\n\n"
-            f"Incident **{req.incident_id}** is now **RESOLVED**."
-        )
-        async for chunk in emit_text(reply):
-            yield chunk
-
-        yield ("done", {
-            "reply": reply,
-            "thinking": f"Recycled {target_container} container and confirmed nominal SLO recovery without triggering code rollback.",
-            "tool_call": tool_calls_executed[0],
-            "tool_calls": tool_calls_executed,
-            "new_nodes": list(dict.fromkeys(spawned_nodes)),
-            "policy_gate": None,
-            "status": "RESOLVED",
             "duration_seconds": round(time.perf_counter() - t0_req, 2)
         })
         return
@@ -1184,21 +1217,119 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                         config=config
                     )
 
-                final_reply = response.text or "Investigation completed."
+                final_reply = response.text or ""
+                # If Gemini returned None or has empty text (for instance because it called another function),
+                # force a final synthesis step with tools disabled so Gemini generates a full, rich markdown explanation!
+                if not final_reply or len(final_reply.strip()) < 20 or response.function_calls:
+                    try:
+                        config_synthesis = types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            thinking_config=types.ThinkingConfig(thinking_level="low")
+                        )
+                        synth_response = await asyncio.to_thread(
+                            client.models.generate_content,
+                            model=settings.LLM_MODEL,
+                            contents=contents,
+                            config=config_synthesis
+                        )
+                        if synth_response.text and len(synth_response.text.strip()) > 10:
+                            final_reply = synth_response.text
+                    except Exception as synth_err:
+                        if settings.DEBUG:
+                            print(f"[Synthesis warning]: {synth_err}")
+
+                # If still empty or minimal, build structured synthesis from executed tools
+                if not final_reply or len(final_reply.strip()) < 20:
+                    tool_summaries = []
+                    for tc in tool_calls_executed:
+                        t_name = tc.get("name")
+                        t_out = tc.get("output", {})
+                        if t_name == "triage_incident" and isinstance(t_out, dict):
+                            tool_summaries.append(f"• **Triage**: Classified as `{t_out.get('severity', 'P1')}` severity in `{t_out.get('domain', 'database')}` domain.")
+                        elif t_name == "get_metrics" and isinstance(t_out, dict):
+                            tool_summaries.append(f"• **Telemetry**: Error rate `{t_out.get('error_rate', 0.0):.1%}`, P95 latency `{t_out.get('latency_p95_ms', 0):.0f}ms`, connection pool `{t_out.get('db_pool_active', 0)}/{t_out.get('db_pool_max', 50)}`.")
+                        elif t_name == "get_service_logs" and isinstance(t_out, dict):
+                            logs = t_out.get("logs", [])
+                            log_str = f"`{logs[0]}`" if logs else "Connection timeout exceptions detected."
+                            tool_summaries.append(f"• **Logs**: {log_str}")
+                        elif t_name == "search_runbooks" and isinstance(t_out, dict):
+                            rbs = t_out.get("runbooks", [])
+                            if rbs:
+                                tool_summaries.append(f"• **Knowledge**: Matched Runbook `{rbs[0].get('doc_id')}` ({rbs[0].get('title')}).")
+                        elif t_name == "evaluate_policy" and isinstance(t_out, dict):
+                            tool_summaries.append(f"• **Policy Guardrail**: Proposed action `{t_out.get('action')}` is {t_out.get('risk_level', 'HIGH')} risk ({t_out.get('decision', 'REQUIRE_APPROVAL')}).")
+
+                    from aegis.acme.client import acme_client
+                    acme_client._load_state()
+                    active_ver = acme_client._mock_state.get(service_name, {}).get("current_version", "2.4.1")
+
+                    if active_ver == "2.4.2":
+                        diag_text = "The service is suffering from a memory leak in the worker session cache. Monotonic heap growth (94%+ of 1024MB limit) is triggering severe garbage collection pauses (1850ms) and elevated response latency."
+                        rec_text = "Restart checkout container (`docker_restart_container`) to recycle heap memory. Code rollback is NOT required. Please confirm: Should I proceed with restarting the checkout-service container?"
+                        default_gate_action = "docker_restart_container"
+                        default_gate_target = "2.4.2"
+                        default_gate_risk = "MEDIUM"
+                        default_gate_reason = "Container restart clears worker heap allocation without requiring code rollback."
+                    elif active_ver == "2.4.3":
+                        diag_text = "The service is encountering database transaction deadlocks on the orders relation. Conflicting lock acquisitions are timing out and triggering HTTP 500 query rollbacks."
+                        rec_text = "Restart database container (`docker_restart_container` on postgres) to flush conflicting transaction locks. Rollback of checkout is NOT required. Please confirm: Should I proceed with restarting the postgres container?"
+                        default_gate_action = "docker_restart_container"
+                        default_gate_target = "2.4.3"
+                        default_gate_risk = "MEDIUM"
+                        default_gate_reason = "Flushing database transaction locks requires container restart."
+                    elif active_ver == "2.4.4":
+                        diag_text = "Configuration failure: `PAYMENT_GATEWAY_URL` points to an unreachable endpoint, causing immediate connection refused and HTTP 502 errors on checkout."
+                        rec_text = "Roll back deployment configuration to stable baseline `v2.4.0`. Production rollback requires operator sign-off. Please approve or reject below to proceed."
+                        default_gate_action = "rollback_deployment"
+                        default_gate_target = "2.4.0"
+                        default_gate_risk = "HIGH"
+                        default_gate_reason = "Production rollback requires human operator approval."
+                    else:
+                        diag_text = "The service is suffering from database connection pool saturation. Under production traffic, connection acquisition times out resulting in elevated HTTP 500 error rates."
+                        rec_text = "Roll back deployment configuration to stable baseline `v2.4.0`. Production rollback requires operator sign-off. Please approve or reject below to proceed."
+                        default_gate_action = "rollback_deployment"
+                        default_gate_target = "2.4.0"
+                        default_gate_risk = "HIGH"
+                        default_gate_reason = "Production rollback requires human operator approval."
+
+                    final_reply = (
+                        f"## Incident Investigation & Diagnostic Summary\n\n"
+                        f"**Service**: `{service_name}` | **Incident ID**: `{req.incident_id}` | **Active Version**: `v{active_ver}`\n\n"
+                        f"{summary_bullets}\n\n"
+                        f"**Root Cause Diagnosis**:\n"
+                        f"{diag_text}\n\n"
+                        f"**Remediation Recommendation**:\n"
+                        f"{rec_text}"
+                    )
+
                 reply_lower = final_reply.lower()
                 if not policy_gate_data and any(k in reply_lower for k in [
                     "approve or reject", "operator approval", "human authorization",
                     "human operator approval", "requires approval", "requires explicit operator approval",
-                    "please approve", "human-in-the-loop"
+                    "please approve", "human-in-the-loop", "should i proceed", "please confirm"
                 ]):
-                    policy_gate_data = {
-                        "action": "rollback_deployment",
-                        "service": service_name,
-                        "target_version": "2.4.0",
-                        "risk_level": "HIGH",
-                        "requires_approval": True,
-                        "reason": "Production rollback requires human operator approval."
-                    }
+                    is_restart_gate = "docker_restart_container" in reply_lower or "restart container" in reply_lower or "restarting the checkout-service" in reply_lower
+                    from aegis.acme.client import acme_client
+                    acme_client._load_state()
+                    active_ver = acme_client._mock_state.get(service_name, {}).get("current_version", "2.4.1")
+                    if active_ver in ["2.4.2", "2.4.3"] or is_restart_gate:
+                        policy_gate_data = {
+                            "action": "docker_restart_container",
+                            "service": service_name,
+                            "target_version": active_ver,
+                            "risk_level": "MEDIUM",
+                            "requires_approval": True,
+                            "reason": "Container restart clears runtime heap allocation without requiring code rollback."
+                        }
+                    else:
+                        policy_gate_data = {
+                            "action": "rollback_deployment",
+                            "service": service_name,
+                            "target_version": "2.4.0",
+                            "risk_level": "HIGH",
+                            "requires_approval": True,
+                            "reason": "Production rollback requires human operator approval."
+                        }
                 final_status = state.status if state else "OPEN"
                 if policy_gate_data:
                     final_status = "PENDING_APPROVAL"

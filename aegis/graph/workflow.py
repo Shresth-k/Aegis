@@ -3,6 +3,7 @@ from typing import Dict, Any, Callable, List, Optional
 from uuid import uuid4
 from aegis.core.state import (
     IncidentState,
+    PolicyEvaluation,
     RemediationResult,
     VerificationResult
 )

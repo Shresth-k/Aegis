@@ -17,6 +17,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY aegis ./aegis
 COPY pyproject.toml .
+COPY .acme_state.json .
 
 EXPOSE 8000
 

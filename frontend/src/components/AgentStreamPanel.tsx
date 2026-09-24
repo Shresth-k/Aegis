@@ -120,6 +120,12 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
       if (msg.policyGate && msg.policyGate.requires_approval) return msg.policyGate;
       if (msg.role !== 'assistant') return null;
       const t = (msg.text || '').toLowerCase();
+      const isRestartAction =
+        t.includes('docker_restart_container') ||
+        t.includes('restart container') ||
+        t.includes('restart checkout') ||
+        t.includes('restarting the checkout-service') ||
+        t.includes('recycle heap');
       const isApprovalText =
         t.includes('approve or reject') ||
         t.includes('operator approval') ||
@@ -129,8 +135,20 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         t.includes('requires operator approval') ||
         t.includes('please approve or reject') ||
         t.includes('please approve') ||
-        (t.includes('requires_approval: true') && (t.includes('rollback') || t.includes('remediat')));
+        t.includes('please confirm') ||
+        t.includes('should i proceed') ||
+        (t.includes('requires_approval: true') && (t.includes('rollback') || t.includes('remediat') || t.includes('restart')));
       if (!isApprovalText) return null;
+      if (isRestartAction) {
+        return {
+          action: 'docker_restart_container',
+          service: state?.service || 'checkout-service',
+          target_version: '2.4.2',
+          risk_level: 'MEDIUM',
+          requires_approval: true,
+          reason: 'Container restart clears runtime heap allocation without requiring code rollback.'
+        };
+      }
       return {
         action: 'rollback_deployment',
         service: state?.service || 'checkout-service',
@@ -835,21 +853,33 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
             <div className="flex items-center gap-2 pt-0.5">
               <button
                 onClick={() => {
-                  handleSendText(`Approve rollback to v${latestPolicyGate.target_version || '2.4.0'}`);
+                  const isRestart = latestPolicyGate.action === 'docker_restart_container' || latestPolicyGate.action.includes('restart');
+                  if (isRestart) {
+                    handleSendText(`Approve container restart for ${latestPolicyGate.service || 'checkout-service'}`);
+                  } else {
+                    handleSendText(`Approve rollback to v${latestPolicyGate.target_version || '2.4.0'}`);
+                  }
                 }}
                 disabled={isApproving || isCopilotThinking}
                 className="flex-1 bg-white hover:bg-zinc-200 text-black text-xs py-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-[0.98]"
               >
                 <Check className="w-3.5 h-3.5 text-black" />
                 <span>
-                  {isApproving || isCopilotThinking
-                    ? 'Executing Rollback...'
-                    : `Approve Rollback to v${latestPolicyGate.target_version || '2.4.0'}`}
+                  {(() => {
+                    const isRestart = latestPolicyGate.action === 'docker_restart_container' || latestPolicyGate.action.includes('restart');
+                    if (isApproving || isCopilotThinking) {
+                      return isRestart ? 'Restarting Container...' : 'Executing Rollback...';
+                    }
+                    return isRestart
+                      ? `Restart Container (${latestPolicyGate.service || 'checkout-service'})`
+                      : `Approve Rollback to v${latestPolicyGate.target_version || '2.4.0'}`;
+                  })()}
                 </span>
               </button>
               <button
                 onClick={() => {
-                  handleSendText('Reject rollback');
+                  const isRestart = latestPolicyGate.action === 'docker_restart_container' || latestPolicyGate.action.includes('restart');
+                  handleSendText(isRestart ? 'Reject container restart' : 'Reject rollback');
                 }}
                 disabled={isApproving || isCopilotThinking}
                 className="px-3.5 bg-[#141416] hover:bg-zinc-800 text-white border border-[#27272a] text-xs py-2 rounded-lg font-medium flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
