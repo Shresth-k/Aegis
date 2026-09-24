@@ -50,13 +50,75 @@ KNOWLEDGE_BASE = [
         """,
         source_type="runbook"
     ),
+    RetrievedRunbook(
+        doc_id="RB-004",
+        title="Application Heap Exhaustion & Memory Leak Runbook",
+        content="""
+        Symptoms:
+        - Monotonic increase in memory utilization (RSS > 90%).
+        - Frequent garbage collection (GC) pauses causing latency spikes (P95 > 2500ms).
+        - Worker threads becoming unresponsive or container crashing with OOMKilled.
+        
+        Investigation Steps:
+        1. Check container memory metrics and heap allocation profiles.
+        2. Inspect if heap bloat is caused by cached request state rather than new code binary.
+        3. Determine whether container recycling or code rollback is required.
+        
+        Remediation:
+        - Execute docker_restart_container on the affected service container to flush heap buffers.
+        - Verify worker thread health and memory consumption nominal baseline (< 60%).
+        - Note: Rollback is NOT required if application code release is stable.
+        """,
+        source_type="runbook"
+    ),
+    RetrievedRunbook(
+        doc_id="RB-005",
+        title="PostgreSQL Row Lock Contention & Transaction Deadlock Runbook",
+        content="""
+        Symptoms:
+        - API requests timing out while executing database updates or checkouts.
+        - Database query logs reporting 'deadlock detected' or 'waiting for ExclusiveLock'.
+        - Spikes in active database transactions with zero throughput.
+        
+        Investigation Steps:
+        1. Query pg_stat_activity for long-running transactions and lock waiters.
+        2. Identify blocking transaction backend PIDs.
+        3. Check if transaction isolation or uncommitted transactions locked table rows.
+        
+        Remediation:
+        - Terminate blocking PIDs or restart database container (acmecloud-postgres) to release locks.
+        - Verify database transaction throughput and zero lock waiters.
+        - Note: Rollback of checkout service is NOT required.
+        """,
+        source_type="runbook"
+    ),
+    RetrievedRunbook(
+        doc_id="RB-006",
+        title="Upstream Payment Gateway Timeout & Circuit Breaker Runbook",
+        content="""
+        Symptoms:
+        - HTTP 502 / 504 Bad Gateway on external payment authorization requests.
+        - Third-party gateway connection resets or timeout exceptions.
+        - Elevated checkout failure rate (> 20%).
+        
+        Investigation Steps:
+        1. Test upstream gateway reachability and endpoint latency.
+        2. Verify if upstream outage is isolated to third-party provider or deployment misconfiguration.
+        3. If upstream endpoint configuration was modified in latest release, execute rollback.
+        
+        Remediation:
+        - Evaluate policy and rollback deployment to stable baseline v2.4.0 if release altered gateway routes.
+        - Activate circuit breaker or fallback payment processor if provider is experiencing outage.
+        """,
+        source_type="runbook"
+    ),
 ]
 
 class RunbookRetriever:
     """Lightweight knowledge retriever over operational runbooks and postmortems."""
 
     @classmethod
-    async def search(cls, query: str, top_k: int = 2) -> List[RetrievedRunbook]:
+    async def search(cls, query: str, top_k: int = 3) -> List[RetrievedRunbook]:
         query_terms = set(query.lower().split())
         scored_docs = []
 
@@ -69,6 +131,10 @@ class RunbookRetriever:
                 scored_docs.append(doc_copy)
 
         scored_docs.sort(key=lambda x: x.score, reverse=True)
-        return scored_docs[:top_k]
+        if scored_docs:
+            return scored_docs[:top_k]
+
+        # Semantic candidate fallback for downstream Jev AI reranker
+        return [doc.model_copy() for doc in KNOWLEDGE_BASE[:top_k]]
 
 runbook_retriever = RunbookRetriever()

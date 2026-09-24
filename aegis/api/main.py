@@ -553,7 +553,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
         for idx, w in enumerate(words):
             chunk = w + (" " if idx < len(words) - 1 else "")
             yield ("text_delta", {"delta": chunk})
-            await asyncio.sleep(0.012)
+            await asyncio.sleep(0.003)
 
     # 1. Approval handling: Operator authorizes remediation
     if any(k in msg for k in ["approve", "confirm", "proceed", "authorize", "rollback now", "execute rollback"]) and not any(k in msg for k in ["reject", "deny", "don't", "dont"]):
@@ -1032,7 +1032,8 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
 
             yield ("thinking", {"thinking": f"Analyzing operator intent for {service_name} with AI Reasoning Engine..."})
 
-            response = client.models.generate_content(
+            response = await asyncio.to_thread(
+                client.models.generate_content,
                 model=settings.LLM_MODEL,
                 contents=contents,
                 config=config
@@ -1045,13 +1046,10 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     if not response.function_calls:
                         break
 
-                    function_response_parts = []
-                    for fcall in response.function_calls:
+                    async def _run_tool(fcall):
                         fname = fcall.name
                         fargs = fcall.args if isinstance(fcall.args, dict) else {}
-
-                        yield ("tool_start", {"name": fname, "args": fargs})
-
+                        pgate = None
                         fres: Any = None
                         fnodes: List[str] = []
 
@@ -1088,16 +1086,14 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                                 req.incident_id
                             )
                             if fres.get("decision") == "REQUIRE_APPROVAL" or fres.get("requires_approval"):
-                                policy_gate_data = {
-                                   "action": fres.get("action", "rollback_deployment"),
-                                   "service": service_name,
-                                   "target_version": "2.4.0",
-                                   "risk_level": fres.get("risk_level", "HIGH"),
-                                   "requires_approval": True,
-                                   "reason": fres.get("reason", "Production rollback requires human authorization.")
+                                pgate = {
+                                    "action": fres.get("action", "rollback_deployment"),
+                                    "service": service_name,
+                                    "target_version": "2.4.0",
+                                    "risk_level": fres.get("risk_level", "HIGH"),
+                                    "requires_approval": True,
+                                    "reason": fres.get("reason", "Production rollback requires human authorization.")
                                 }
-                                if state:
-                                    state.status = "PENDING_APPROVAL"
                         elif fname == "rollback_deployment":
                             if state and state.approval_granted:
                                 fres, fnodes = await tool_rollback_deployment(
@@ -1107,7 +1103,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                                     req.incident_id
                                 )
                             else:
-                                policy_gate_data = {
+                                pgate = {
                                     "action": "rollback_deployment",
                                     "service": service_name,
                                     "target_version": fargs.get("target_version", "2.4.0"),
@@ -1115,8 +1111,6 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                                     "requires_approval": True,
                                     "reason": "Production rollback requires human operator approval."
                                 }
-                                if state:
-                                    state.status = "PENDING_APPROVAL"
                                 fres = {
                                     "status": "BLOCKED_BY_POLICY",
                                     "message": "Production rollback requires human operator approval. Policy gate activated."
@@ -1144,6 +1138,24 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                         else:
                             fres = {"error": f"Unknown tool {fname}"}
 
+                        return fname, fargs, fres, fnodes, pgate
+
+                    # Emit tool_start for all proposed tools
+                    for fcall in response.function_calls:
+                        fname = fcall.name
+                        fargs = fcall.args if isinstance(fcall.args, dict) else {}
+                        yield ("tool_start", {"name": fname, "args": fargs})
+
+                    # Concurrently execute tools in parallel
+                    executed_tools = await asyncio.gather(*[_run_tool(fc) for fc in response.function_calls])
+
+                    function_response_parts = []
+                    for fname, fargs, fres, fnodes, pgate in executed_tools:
+                        if pgate and not policy_gate_data:
+                            policy_gate_data = pgate
+                            if state:
+                                state.status = "PENDING_APPROVAL"
+
                         tool_calls_executed.append({
                             "name": fname,
                             "args": fargs,
@@ -1165,7 +1177,8 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     tool_response_content = types.Content(role="user", parts=function_response_parts)
                     contents.extend([model_call_content, tool_response_content])
 
-                    response = client.models.generate_content(
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
                         model=settings.LLM_MODEL,
                         contents=contents,
                         config=config

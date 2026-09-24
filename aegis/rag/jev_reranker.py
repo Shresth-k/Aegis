@@ -98,7 +98,8 @@ class JevReranker:
                 RUNBOOKS:
                 {json.dumps(docs_payload)}
                 """
-                response = client.models.generate_content(
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
                     model=settings.LLM_MODEL,
                     contents=prompt,
                     config=types.GenerateContentConfig(
