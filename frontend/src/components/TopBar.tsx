@@ -1,5 +1,5 @@
 import React from 'react';
-import { Share2, Search, AlertCircle, Check, Server, Bot, ShoppingBag, ExternalLink } from 'lucide-react';
+import { Share2, Search, AlertCircle, Check, ExternalLink } from 'lucide-react';
 import { IncidentState } from '../types';
 
 interface TopBarProps {
@@ -10,8 +10,8 @@ interface TopBarProps {
   incidents?: Array<{ incident_id: string; title: string; service: string; severity: string; status: string }>;
   currentIncidentId?: string;
   onSelectIncident?: (incidentId: string) => void;
-  activeView?: 'aegis' | 'acmecloud' | 'store';
-  onToggleView?: (view: 'aegis' | 'acmecloud' | 'store') => void;
+  activeView?: 'aegis' | 'acmecloud';
+  onToggleView?: (view: 'aegis' | 'acmecloud') => void;
   acmecloudVersion?: string;
   acmecloudHealthy?: boolean;
 }
@@ -104,69 +104,46 @@ export const TopBar: React.FC<TopBarProps> = ({
         {getStatusBadge()}
       </div>
 
-      {/* Center View Switcher */}
-      <div className="flex items-center bg-[#18181b] border border-[#2e2e34] rounded-lg p-0.5">
-        <button
-          onClick={() => onToggleView?.('aegis')}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
-            activeView === 'aegis'
-              ? 'bg-[#27272a] text-white font-medium shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
+      {/* Center: Acme Storefront Deep Link */}
+      <div className="flex items-center gap-2">
+        <a
+          href="http://localhost:3002"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#18181b] hover:bg-[#222226] border border-[#2e2e34] hover:border-cyan-500/40 text-xs font-mono text-cyan-400 hover:text-cyan-300 transition-all cursor-pointer shadow-sm group"
+          title="Open independent customer-facing Acme Storefront (Port 3002)"
         >
-          <Bot className="w-3.5 h-3.5 text-zinc-300" />
-          <span>Aegis SRE Copilot</span>
-        </button>
-
-        <button
-          onClick={() => onToggleView?.('store')}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
-            activeView === 'store'
-              ? 'bg-[#27272a] text-white font-medium shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-          title="Open Acme Hardware Store (Port 3002)"
-        >
-          <ShoppingBag className="w-3.5 h-3.5 text-zinc-300" />
-          <span>Acme Store (Port 3002)</span>
-        </button>
-
-        <button
-          onClick={() => onToggleView?.('acmecloud')}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
-            activeView === 'acmecloud'
-              ? 'bg-[#27272a] text-white font-medium shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-          title="Open AcmeCloud Engineering Console"
-        >
-          <Server className="w-3.5 h-3.5 text-zinc-300" />
-          <span>DevOps Console</span>
-        </button>
+          <span className="w-2 h-2 rounded-full bg-cyan-400 group-hover:scale-125 transition-transform" />
+          <span className="font-semibold text-white">Acme Store</span>
+          <span className="text-[10px] text-zinc-400 uppercase font-bold">(:3002)</span>
+          <ExternalLink className="w-3 h-3 text-zinc-400 group-hover:text-cyan-300" />
+        </a>
       </div>
 
-      {/* Right Action Tools & AcmeCloud Status Pill */}
+      {/* Right Action Tools & Acme Store Status Pill */}
       <div className="flex items-center gap-2 shrink-0">
-        {/* AcmeCloud Infrastructure Status Pill */}
-        <button
-          onClick={() => onToggleView?.('acmecloud')}
+        {/* Acme Store Live Version & Health Pill */}
+        <a
+          href="http://localhost:3002"
+          target="_blank"
+          rel="noopener noreferrer"
           className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all cursor-pointer ${
             acmecloudHealthy
               ? 'bg-[#16171d] hover:bg-[#1f2029] text-zinc-300 border-[#2f313f]'
               : 'bg-red-950/40 hover:bg-red-900/50 text-red-200 border-red-800/60'
           }`}
-          title="Click to open AcmeCloud Console and manage build deployments"
+          title="Live Acme Storefront status — click to open store and simulate chaos"
         >
           <span
             className={`w-2 h-2 rounded-full ${
               acmecloudHealthy ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'
             }`}
           />
-          <span>AcmeCloud: v{acmecloudVersion}</span>
+          <span>Store: v{acmecloudVersion}</span>
           <span className="text-[10px] uppercase font-bold tracking-wider opacity-75">
-            [{acmecloudHealthy ? 'Healthy' : 'Fault'}]
+            [{acmecloudHealthy ? 'Nominal' : 'Incident'}]
           </span>
-        </button>
+        </a>
 
         {/* Search Bar */}
         <div className="relative hidden 2xl:flex items-center">

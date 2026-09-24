@@ -3,7 +3,6 @@ import { TopBar } from './components/TopBar';
 import { WorkflowCanvas } from './components/WorkflowCanvas';
 import { AgentStreamPanel } from './components/AgentStreamPanel';
 import { AcmeCloudConsole } from './components/AcmeCloudConsole';
-import { AcmeStorefront } from './components/AcmeStorefront';
 import { IncidentState, TraceEvent } from './types';
 
 export default function App() {
@@ -23,14 +22,7 @@ export default function App() {
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<number>(0);
-  const [activeView, setActiveView] = useState<'aegis' | 'acmecloud' | 'store'>(() => {
-    if (typeof window !== 'undefined') {
-      if (window.location.port === '3002' || window.location.pathname.startsWith('/store')) {
-        return 'store';
-      }
-    }
-    return 'aegis';
-  });
+  const [activeView, setActiveView] = useState<'aegis' | 'acmecloud'>('aegis');
   const [acmecloudVersion, setAcmecloudVersion] = useState<string>('2.4.0');
   const [acmecloudHealthy, setAcmecloudHealthy] = useState<boolean>(true);
 
@@ -454,56 +446,42 @@ export default function App() {
         currentIncidentId={currentIncidentId}
         onSelectIncident={(id) => {
           setCurrentIncidentId(id);
-          setVisibleNodeIds([]);
-          setActiveNodeId(null);
-          setSelectedNodeId(null);
           setSessionKey((prev) => prev + 1);
           fetchIncident(id);
         }}
-        activeView={activeView}
-        onToggleView={setActiveView}
         acmecloudVersion={acmecloudVersion}
         acmecloudHealthy={acmecloudHealthy}
       />
 
-      {/* 2. Main Workspace (Aegis Workflow Canvas + Agent Stream OR Acme Store OR AcmeCloud Console) */}
-      {activeView === 'store' ? (
-        <AcmeStorefront onOpenAegis={() => setActiveView('aegis')} />
-      ) : activeView === 'acmecloud' ? (
-        <AcmeCloudConsole
-          onSwitchToAegis={() => setActiveView('aegis')}
-          onDeploySuccess={handleAcmeDeploySuccess}
-        />
-      ) : (
-        <div className="flex-1 flex w-full overflow-hidden relative">
-          {/* Left Canvas Pane */}
-          <div className="flex-1 h-full relative overflow-hidden">
-            <WorkflowCanvas
-              state={incidentState}
-              selectedNodeId={selectedNodeId}
-              onNodeSelect={setSelectedNodeId}
-              isRunning={isRunning}
-              visibleNodeIds={visibleNodeIds}
-              activeNodeId={activeNodeId}
-              onClearCanvas={handleClearCanvas}
-            />
-          </div>
-
-          {/* Right Glassmorphic Agent Stream Panel */}
-          <AgentStreamPanel
-            key={`${currentIncidentId}-${sessionKey}`}
+      {/* 2. Main Workspace (Aegis Workflow Canvas + Agent Stream) */}
+      <div className="flex-1 flex w-full overflow-hidden relative">
+        {/* Left Canvas Pane */}
+        <div className="flex-1 h-full relative overflow-hidden">
+          <WorkflowCanvas
             state={incidentState}
-            traces={traces}
             selectedNodeId={selectedNodeId}
-            onApprove={handleApprove}
-            isApproving={isApproving}
-            onSendMessage={handleSendMessage}
+            onNodeSelect={setSelectedNodeId}
+            isRunning={isRunning}
             visibleNodeIds={visibleNodeIds}
             activeNodeId={activeNodeId}
-            onChatResponse={handleChatResponse}
+            onClearCanvas={handleClearCanvas}
           />
         </div>
-      )}
+
+        {/* Right Glassmorphic Agent Stream Panel */}
+        <AgentStreamPanel
+          key={`${currentIncidentId}-${sessionKey}`}
+          state={incidentState}
+          traces={traces}
+          selectedNodeId={selectedNodeId}
+          onApprove={handleApprove}
+          isApproving={isApproving}
+          onSendMessage={handleSendMessage}
+          visibleNodeIds={visibleNodeIds}
+          activeNodeId={activeNodeId}
+          onChatResponse={handleChatResponse}
+        />
+      </div>
     </div>
   );
 }
