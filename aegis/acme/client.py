@@ -32,11 +32,56 @@ _DEFAULT_MOCK_STATE = {
                 "health": False,
                 "error_rate": 0.385,
                 "latency_ms": 2850.0,
+                "fault_type": "pool_starvation",
                 "logs": [
                     "INFO request received",
                     "ERROR timeout acquiring DB connection from pool (limit=5)",
                     "ERROR connection pool exhausted for checkout-service",
                     "ERROR checkout failed with HTTP 500: DatabaseTimeout",
+                ],
+            },
+            "2.4.2": {
+                "db_pool": 50,
+                "health": False,
+                "error_rate": 0.018,
+                "latency_ms": 1450.0,
+                "memory_usage_mb": 965,
+                "memory_limit_mb": 1024,
+                "fault_type": "memory_leak",
+                "logs": [
+                    "INFO request received",
+                    "WARN high memory heap allocation: 94.2% of 1024MB limit consumed",
+                    "WARN GC pause duration spike: 1850ms during generational compaction",
+                    "ERROR worker thread pool latency elevated due to severe heap thrashing",
+                    "INFO recommendation: container restart will flush leaked session cache without code rollback",
+                ],
+            },
+            "2.4.3": {
+                "db_pool": 50,
+                "health": False,
+                "error_rate": 0.142,
+                "latency_ms": 7500.0,
+                "fault_type": "db_deadlock",
+                "logs": [
+                    "INFO request received",
+                    "ERROR database transaction timeout: Lock wait timeout exceeded (7500ms)",
+                    "ERROR PostgreSQL deadlock detected: process 4182 waiting for ExclusiveLock on relation orders",
+                    "ERROR query rolled back by database engine: deadlock detected",
+                    "INFO recommendation: database connection pool flush or postgres container restart clears locks",
+                ],
+            },
+            "2.4.4": {
+                "db_pool": 50,
+                "health": False,
+                "error_rate": 0.998,
+                "latency_ms": 120.0,
+                "fault_type": "upstream_timeout",
+                "logs": [
+                    "INFO request received",
+                    "ERROR connect to payment-gw.internal.invalid:9999 failed: Connection refused",
+                    "ERROR checkout payment step failed: HTTP 502 Bad Gateway from upstream payment provider",
+                    "ERROR configuration error: PAYMENT_GATEWAY_URL points to unreachable endpoint",
+                    "INFO recommendation: restore valid gateway endpoint or rollback deployment config",
                 ],
             }
         }
@@ -138,12 +183,14 @@ class AcmeClient:
                         data = resp.json()
                         ver = data.get("version", "2.4.1")
                         is_healthy = data.get("status") == "healthy" and data.get("database") == "healthy"
+                        v_data = self._mock_state.get(service, {}).get("versions", {}).get(ver, {})
+                        is_healthy_ver = v_data.get("health", ver == "2.4.0")
                         return {
                             "service": service,
                             "version": ver,
-                            "healthy": is_healthy and ver != "2.4.1",
-                            "error_rate": 0.385 if ver == "2.4.1" else 0.002,
-                            "latency_ms": 2031.4 if ver == "2.4.1" else 42.5,
+                            "healthy": is_healthy and is_healthy_ver,
+                            "error_rate": v_data.get("error_rate", 0.385 if ver == "2.4.1" else 0.002),
+                            "latency_ms": v_data.get("latency_ms", 2031.4 if ver == "2.4.1" else 42.5),
                         }
             except Exception:
                 if attempt < 7:
@@ -215,13 +262,18 @@ class AcmeClient:
         health = await self.get_service_health(service)
         ver = health.get("version", "2.4.1")
 
+        self._load_state()
+        svc_state = self._mock_state.get(service, {})
+        v_data = svc_state.get("versions", {}).get(ver, {})
+        default_err = v_data.get("error_rate", 0.385 if ver == "2.4.1" else 0.002)
+        default_lat = v_data.get("latency_ms", 2031.4 if ver == "2.4.1" else 42.5)
+        pool_val = v_data.get("db_pool", 5 if ver == "2.4.1" else 50)
+
         if requests_total == 0:
-            error_rate = 0.385 if ver == "2.4.1" else 0.002
-            p95_latency = 2031.4 if ver == "2.4.1" else 42.5
-            pool_val = 5 if ver == "2.4.1" else 50
+            error_rate = default_err
+            p95_latency = default_lat
         else:
-            p95_latency = 2031.4 if (ver == "2.4.1" or error_rate > 0.05) else 42.5
-            pool_val = 5 if ver == "2.4.1" else 50
+            p95_latency = default_lat if (error_rate > 0.05 or ver != "2.4.0") else 42.5
 
         return {
             "service": service,
@@ -229,7 +281,7 @@ class AcmeClient:
             "error_rate": error_rate,
             "latency_p95_ms": p95_latency,
             "requests_per_sec": 142.5 if requests_total > 0 else 0.0,
-            "db_pool_active": max(active_db, 5 if ver == "2.4.1" else 0),
+            "db_pool_active": max(active_db, pool_val if ver == "2.4.1" else 0),
             "db_pool_max": pool_val,
             "prometheus_telemetry": {
                 "checkout_errors_total": errors_total,

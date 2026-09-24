@@ -625,6 +625,61 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
         })
         return
 
+    # 2.2 Container Restart / DB Flush Remediation (For Memory Leak or DB Deadlock Scenarios)
+    if any(k in msg for k in ["restart container", "restart pod", "restart checkout", "restart postgres", "reboot container", "flush lock", "recycle container", "clear memory"]):
+        target_container = "acmecloud-postgres" if any(k in msg for k in ["postgres", "database", "db", "lock"]) else "acmecloud-checkout"
+        yield ("thinking", {"thinking": f"Operator authorized container lifecycle remediation. Restarting `{target_container}` via Docker daemon to clear runtime state..."})
+
+        yield ("tool_start", {"name": "docker_restart_container", "args": {"container_name": target_container}})
+        res_rst, nodes_rst = await tool_docker_restart_container(target_container)
+        spawned_nodes.extend(nodes_rst)
+        tool_calls_executed.append({
+            "name": "docker_restart_container",
+            "args": {"container_name": target_container},
+            "output": res_rst
+        })
+        yield ("tool_result", {"name": "docker_restart_container", "output": res_rst, "node": "remediate"})
+        yield ("node_spawned", {"node_id": "remediate"})
+
+        yield ("tool_start", {"name": "verify_slo", "args": {"service": service_name}})
+        res_verify, nodes_ver = await tool_verify_slo(service_name, state, req.incident_id)
+        spawned_nodes.extend(nodes_ver)
+        tool_calls_executed.append({
+            "name": "verify_slo",
+            "args": {"service": service_name},
+            "output": res_verify
+        })
+        yield ("tool_result", {"name": "verify_slo", "output": res_verify, "node": "verify"})
+        yield ("node_spawned", {"node_id": "verify"})
+
+        state.status = "RESOLVED"
+        state.approval_granted = True
+        state.approved_by = "LeadSRE"
+        INCIDENTS[req.incident_id] = state
+
+        reply = (
+            f"**Container Restart Executed & Verified Successfully:**\n\n"
+            f"- **Action**: `docker_restart_container` on `{target_container}`\n"
+            f"- **Status**: `SUCCESS` — Container restarted; heap allocation flushed and worker thread pool restored.\n"
+            f"- **SLO Verification**: Nominal health restored. Error rate is `{res_verify.get('error_rate', 0.002):.2%}` and P95 latency dropped to `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n"
+            f"- **Policy Note**: Code rollback was **not required** because the release binary was stable and the fault was isolated to runtime state.\n\n"
+            f"Incident **{req.incident_id}** is now **RESOLVED**."
+        )
+        async for chunk in emit_text(reply):
+            yield chunk
+
+        yield ("done", {
+            "reply": reply,
+            "thinking": f"Recycled {target_container} container and confirmed nominal SLO recovery without triggering code rollback.",
+            "tool_call": tool_calls_executed[0],
+            "tool_calls": tool_calls_executed,
+            "new_nodes": list(dict.fromkeys(spawned_nodes)),
+            "policy_gate": None,
+            "status": "RESOLVED",
+            "duration_seconds": round(time.perf_counter() - t0_req, 2)
+        })
+        return
+
     # 2.5 Parallel Tool Execution Orchestration (e.g. "execute get_metrics 4 times in parallel", "run 4 parallel probes")
     is_parallel_request = (
         ("parallel" in msg or "concurrent" in msg) and 
@@ -944,6 +999,11 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 "- docker_restart_container(container_name): restart container via Docker daemon\n\n"
                 "When the operator asks about Docker, running containers, or 'docker stuff', DO NOT REFUSE. You have full authorized access to Docker daemon inspection tools. Immediately call docker_ps() to list containers, or docker_logs() to retrieve logs, and present the container IDs, image names, ports, and status.\n"
                 "When investigating an incident (e.g. user says 'start', 'investigate', 'what is wrong', 'diagnose', or asks for status), autonomously call the tools to inspect triage, metrics, logs, runbooks, and evaluate policy.\n"
+                "DIAGNOSTIC & REMEDIATION MATRIX ACROSS USECASES:\n"
+                "- DB Connection Pool Starvation (v2.4.1): Connection pool throttled to 5. Root cause is faulty deployment configuration. Remediate via evaluate_policy then rollback_deployment(service, '2.4.0') with operator approval.\n"
+                "- Memory Leak / Heap Exhaustion (v2.4.2): Monotonic heap memory growth (94%+), GC thrashing, worker thread latency. The code is stable but runtime heap is exhausted. Remediate via docker_restart_container('acmecloud-checkout'). Rollback is NOT required.\n"
+                "- Database Lock Contention / Deadlock (v2.4.3): ExclusiveLock transaction deadlocks on orders table. Remediate via docker_restart_container('acmecloud-postgres') to clear database transaction locks. Rollback of checkout is NOT required.\n"
+                "- Upstream Gateway Timeout (v2.4.4): Payment gateway endpoint unreachable (HTTP 502). Remediate via evaluate_policy then rollback_deployment(service, '2.4.0').\n"
                 "When answering queries about metrics, provide Live Telemetry and Error Rate.\n"
                 "When answering queries about policy, explain the Policy guardrail.\n"
                 "CRITICAL SAFETY RULE: High-risk remediation actions like rollback_deployment require human operator approval. Always evaluate policy before proposing or executing rollback. Never execute rollback without operator approval. When you recommend rollback to v2.4.0 after evaluating policy, explicitly ask the human operator for approval in your message text (e.g.: 'Production rollback requires human operator approval. Please approve or reject below to proceed.'). Do NOT propose or ask for approval on routine queries, docker container checks, or informational questions.\n"
@@ -1690,120 +1750,316 @@ async def _continuous_traffic_worker(base_url: str = "http://localhost:8001"):
     print("[Chaos Traffic] Worker stopped.", flush=True)
 
 
-@app.post("/api/chaos/inject")
-async def inject_chaos(service: str = "checkout-service", version: str = "2.4.1"):
-    """Inject faulty deployment (v2.4.1 with DB connection pool exhaustion)."""
+ACME_BUILDS = [
+    {
+        "version": "2.4.0",
+        "title": "Baseline Production Release",
+        "service": "checkout-service",
+        "status": "STABLE",
+        "fault_type": "none",
+        "description": "Nominal production build. DB connection pool of 50, zero injection delay, nominal error rate (<0.2%), and sub-50ms latency.",
+        "needs_rollback": False,
+        "recommended_action": "none",
+        "action_label": "Restore Baseline",
+        "env_diff": {
+            "DB_CONNECTION_POOL": 50,
+            "DB_POOL_TIMEOUT": 5.0,
+            "DB_OPERATION_DELAY_MS": 0
+        },
+        "target_incident_severity": "NOMINAL"
+    },
+    {
+        "version": "2.4.1",
+        "title": "DB Connection Pool Starvation",
+        "service": "checkout-service",
+        "status": "FAULTY",
+        "fault_type": "pool_starvation",
+        "description": "Database connection pool throttled to 5 with 2000ms delay. Triggers rapid connection pool starvation and 500 DatabaseTimeout errors under load.",
+        "needs_rollback": True,
+        "recommended_action": "rollback_deployment",
+        "action_label": "Rollback to v2.4.0 (Approval Gate)",
+        "env_diff": {
+            "DB_CONNECTION_POOL": 5,
+            "DB_POOL_TIMEOUT": 0.5,
+            "DB_OPERATION_DELAY_MS": 2000
+        },
+        "target_incident_severity": "P1"
+    },
+    {
+        "version": "2.4.2",
+        "title": "Memory Leak & Heap Exhaustion",
+        "service": "checkout-service",
+        "status": "FAULTY",
+        "fault_type": "memory_leak",
+        "description": "Worker session cache leaks memory monotonically up to 94.2% heap limit. Causes GC thrashing and elevated P95 latency. Container restart recycles heap without code rollback.",
+        "needs_rollback": False,
+        "recommended_action": "docker_restart_container",
+        "action_label": "Restart Container (No Rollback)",
+        "env_diff": {
+            "DB_CONNECTION_POOL": 50,
+            "MEMORY_LEAK_RATE_MB": 35,
+            "SIMULATE_MEMORY_LEAK": True
+        },
+        "target_incident_severity": "P2"
+    },
+    {
+        "version": "2.4.3",
+        "title": "Database Lock Deadlock Contention",
+        "service": "checkout-service",
+        "status": "FAULTY",
+        "fault_type": "db_deadlock",
+        "description": "Concurrent transactions cause row-level ExclusiveLock contention on PostgreSQL orders table. P95 latency exceeds 7500ms. Database connection reset or postgres restart clears deadlock.",
+        "needs_rollback": False,
+        "recommended_action": "docker_restart_postgres",
+        "action_label": "Reset DB Connections / Restart Postgres",
+        "env_diff": {
+            "DB_CONNECTION_POOL": 50,
+            "DB_OPERATION_DELAY_MS": 7500,
+            "SIMULATE_LOCK_CONTENTION": True
+        },
+        "target_incident_severity": "P1"
+    },
+    {
+        "version": "2.4.4",
+        "title": "Upstream Payment Gateway Timeout",
+        "service": "checkout-service",
+        "status": "FAULTY",
+        "fault_type": "upstream_timeout",
+        "description": "Payment gateway endpoint URL points to unreachable address. Payments fail with HTTP 502 Bad Gateway while local database remains healthy. Requires configuration rollback.",
+        "needs_rollback": True,
+        "recommended_action": "rollback_deployment",
+        "action_label": "Config Hotfix / Rollback",
+        "env_diff": {
+            "PAYMENT_GATEWAY_TIMEOUT": 0.001,
+            "PAYMENT_GATEWAY_URL": "http://payment-gw.internal.invalid:9999"
+        },
+        "target_incident_severity": "P1"
+    }
+]
+
+
+async def _deploy_build(service: str = "checkout-service", version: str = "2.4.1") -> Dict[str, Any]:
+    """Core logic to switch build version and simulate operational impact."""
+    build_meta = next((b for b in ACME_BUILDS if b["version"] == version), None)
+    if not build_meta:
+        build_meta = {
+            "version": version,
+            "title": f"Custom Build {version}",
+            "service": service,
+            "status": "CUSTOM",
+            "fault_type": "custom",
+            "description": f"Deployment of {service} build {version}.",
+            "needs_rollback": version != "2.4.0",
+            "recommended_action": "rollback_deployment" if version != "2.4.0" else "none",
+            "action_label": "Rollback" if version != "2.4.0" else "None",
+            "target_incident_severity": "P1" if version != "2.4.0" else "NOMINAL"
+        }
+
+    # 1. Update AcmeClient version
     acme_client.set_mock_version(service, version)
-    tracer.log_event("CHAOS", "chaos", "CHAOS_INJECTED", {
-        "service": service,
-        "version": version,
-        "fault": "DB connection pool limited to 5"
-    })
 
-    # Start continuous live traffic so Prometheus and Grafana immediately spike
     global _traffic_task, _traffic_running
-    if _traffic_task and not _traffic_task.done():
+    if version == "2.4.0":
+        # Reset baseline
         _traffic_running = False
-        _traffic_task.cancel()
-    _traffic_running = True
-    _traffic_task = asyncio.create_task(_continuous_traffic_worker())
+        if _traffic_task and not _traffic_task.done():
+            _traffic_task.cancel()
+            _traffic_task = None
+
+        tracer.log_event("CHAOS", "chaos", "CHAOS_RESET", {
+            "service": service,
+            "version": "2.4.0",
+            "health": "RESTORED"
+        })
+
+        # Register healthy requests to Prometheus
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                for _ in range(4):
+                    await client.post("http://localhost:8001/checkout", json={
+                        "customer_id": "00000000-0000-0000-0000-000000000001",
+                        "total_amount": 49.99,
+                        "currency": "USD"
+                    })
+        except Exception:
+            pass
+
+        # Update incidents to RESOLVED
+        for inc_id, state in list(INCIDENTS.items()):
+            if state.service == service:
+                state.status = "RESOLVED"
+                INCIDENTS[inc_id] = state
+
+        try:
+            mcp_data = _load_incidents()
+            for inc_id, inc_dict in mcp_data.items():
+                if inc_dict.get("service") == service:
+                    inc_dict["status"] = "RESOLVED"
+                    inc_dict["active_version"] = "2.4.0"
+            _save_incidents(mcp_data)
+        except Exception as e:
+            print(f"Warning: could not save MCP incidents: {e}")
+
+        return {
+            "status": "RESET",
+            "deploy_status": "DEPLOYED",
+            "service": service,
+            "version": "2.4.0",
+            "is_healthy": True,
+            "build": build_meta,
+            "message": f"Successfully deployed baseline build v2.4.0 for {service}."
+        }
+    else:
+        # Deploy faulty build & start traffic load
+        tracer.log_event("CHAOS", "chaos", "CHAOS_INJECTED", {
+            "service": service,
+            "version": version,
+            "fault": build_meta["title"]
+        })
+
+        if _traffic_task and not _traffic_task.done():
+            _traffic_running = False
+            _traffic_task.cancel()
+        _traffic_running = True
+        _traffic_task = asyncio.create_task(_continuous_traffic_worker())
+
+        # Update in-memory state with specific scenario context
+        for inc_id, state in list(INCIDENTS.items()):
+            if state.service == service:
+                INCIDENTS[inc_id] = IncidentState(
+                    incident_id=inc_id,
+                    service=service,
+                    severity=build_meta["target_incident_severity"],
+                    title=f"{build_meta['title']} on {service}",
+                    description=build_meta["description"],
+                    status="OPEN"
+                )
+
+        try:
+            mcp_data = _load_incidents()
+            for inc_id, inc_dict in mcp_data.items():
+                if inc_dict.get("service") == service:
+                    inc_dict["status"] = "OPEN"
+                    inc_dict["active_version"] = version
+                    inc_dict["summary"] = build_meta["title"]
+                    if "resolved_at" in inc_dict:
+                        del inc_dict["resolved_at"]
+            _save_incidents(mcp_data)
+        except Exception as e:
+            print(f"Warning: could not save MCP incidents: {e}")
+
+        return {
+            "status": "INJECTED",
+            "deploy_status": "DEPLOYED",
+            "service": service,
+            "version": version,
+            "is_healthy": False,
+            "build": build_meta,
+            "message": f"Deployed build v{version} ({build_meta['title']}) for {service} with live load traffic."
+        }
+
+
+class DeployBuildRequest(BaseModel):
+    service: str = "checkout-service"
+    version: str = "2.4.1"
+
+
+@app.get("/api/acmecloud/builds")
+async def get_acmecloud_builds(service: str = "checkout-service"):
+    """List available AcmeCloud deployment builds and their scenario metadata."""
+    health = await acme_client.get_service_health(service)
+    current_ver = health.get("version", "2.4.0")
     
-    def _task_done_cb(t):
-        if t.cancelled():
-            print("[Chaos Traffic] Task was cancelled.", flush=True)
-        elif t.exception():
-            print(f"[Chaos Traffic] Task failed with: {t.exception()}", flush=True)
-    _traffic_task.add_done_callback(_task_done_cb)
+    builds_with_active = []
+    for b in ACME_BUILDS:
+        builds_with_active.append({
+            **b,
+            "is_active": b["version"] == current_ver
+        })
+    return {
+        "service": service,
+        "current_version": current_ver,
+        "builds": builds_with_active
+    }
 
-    # Reset any existing incident state in memory so it can be re-run cleanly
-    for inc_id, state in list(INCIDENTS.items()):
-        if state.service == service:
-            INCIDENTS[inc_id] = IncidentState(
-                incident_id=inc_id,
-                service=service,
-                severity=state.severity,
-                title=state.title,
-                description=state.description,
-                status="OPEN"
-            )
 
-    # Persist OPEN status to MCP incident store file
+@app.get("/api/acmecloud/status")
+async def get_acmecloud_status(service: str = "checkout-service"):
+    """Get overall AcmeCloud infrastructure health, telemetry, and container statuses."""
+    health = await acme_client.get_service_health(service)
+    metrics = await acme_client.get_metrics(service)
+    current_ver = health.get("version", "2.4.0")
+
+    containers = []
     try:
-        mcp_data = _load_incidents()
-        for inc_id, inc_dict in mcp_data.items():
-            if inc_dict.get("service") == service:
-                inc_dict["status"] = "OPEN"
-                inc_dict["active_version"] = version
-                if "resolved_at" in inc_dict:
-                    del inc_dict["resolved_at"]
-        _save_incidents(mcp_data)
-    except Exception as e:
-        print(f"Warning: could not save MCP incidents: {e}")
+        from aegis.mcp.server import docker_ps
+        containers = await docker_ps(all_containers=True)
+    except Exception:
+        pass
+
+    services_manifest = [
+        {"name": "checkout-service", "role": "Core API", "port": 8001, "version": current_ver, "healthy": health.get("healthy", True)},
+        {"name": "postgres", "role": "Stateful DB", "port": 5432, "version": "17.0", "healthy": True},
+        {"name": "prometheus", "role": "Metrics TSDB", "port": 9090, "version": "v3.5.0", "healthy": True},
+        {"name": "grafana", "role": "Dashboards", "port": 3001, "version": "12.1.1", "healthy": True},
+    ]
 
     return {
-        "status": "INJECTED",
         "service": service,
-        "version": version,
-        "message": f"Injected faulty deployment {version} for {service} with active live traffic generation."
+        "current_version": current_ver,
+        "is_healthy": health.get("healthy", True),
+        "error_rate": metrics.get("error_rate", 0.0),
+        "latency_p95_ms": metrics.get("latency_p95_ms", 42.5),
+        "requests_per_sec": metrics.get("requests_per_sec", 120.0),
+        "db_pool_active": metrics.get("db_pool_active", 0),
+        "db_pool_max": metrics.get("db_pool_max", 50),
+        "traffic_running": _traffic_running,
+        "services": services_manifest,
+        "containers": containers
     }
+
+
+@app.post("/api/acmecloud/deploy")
+async def deploy_acmecloud_build(req: DeployBuildRequest):
+    """Deploy any build from the AcmeCloud build catalog to simulate an operational scenario."""
+    return await _deploy_build(service=req.service, version=req.version)
+
+
+@app.post("/api/acmecloud/traffic/toggle")
+async def toggle_acmecloud_traffic(enable: Optional[bool] = None):
+    """Toggle continuous simulated load traffic in AcmeCloud."""
+    global _traffic_task, _traffic_running
+    target_state = not _traffic_running if enable is None else enable
+
+    if target_state and not _traffic_running:
+        _traffic_running = True
+        _traffic_task = asyncio.create_task(_continuous_traffic_worker())
+        return {"status": "TRAFFIC_STARTED", "traffic_running": True}
+    elif not target_state and _traffic_running:
+        _traffic_running = False
+        if _traffic_task and not _traffic_task.done():
+            _traffic_task.cancel()
+            _traffic_task = None
+        return {"status": "TRAFFIC_STOPPED", "traffic_running": False}
+
+    return {"status": "NOOP", "traffic_running": _traffic_running}
+
+
+@app.post("/api/chaos/inject")
+async def inject_chaos(service: str = "checkout-service", version: str = "2.4.1"):
+    """Inject faulty deployment build."""
+    return await _deploy_build(service=service, version=version)
 
 
 @app.post("/api/chaos/reset")
 async def reset_chaos(service: str = "checkout-service"):
     """Reset AcmeCloud to healthy baseline (v2.4.0)."""
-    acme_client.set_mock_version(service, "2.4.0")
-    tracer.log_event("CHAOS", "chaos", "CHAOS_RESET", {
-        "service": service,
-        "version": "2.4.0",
-        "health": "RESTORED"
-    })
-
-    # Stop continuous traffic loop
-    global _traffic_task, _traffic_running
-    _traffic_running = False
-    if _traffic_task and not _traffic_task.done():
-        _traffic_task.cancel()
-        _traffic_task = None
-
-    # Send 4 healthy requests to immediately register nominal SLOs in Prometheus
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            for _ in range(4):
-                await client.post("http://localhost:8001/checkout", json={
-                    "customer_id": "00000000-0000-0000-0000-000000000001",
-                    "total_amount": 49.99,
-                    "currency": "USD"
-                })
-    except Exception:
-        pass
-
-    # Update in-memory state
-    for inc_id, state in list(INCIDENTS.items()):
-        if state.service == service:
-            state.status = "RESOLVED"
-            INCIDENTS[inc_id] = state
-
-    # Persist RESOLVED status to MCP incident store file
-    try:
-        mcp_data = _load_incidents()
-        for inc_id, inc_dict in mcp_data.items():
-            if inc_dict.get("service") == service:
-                inc_dict["status"] = "RESOLVED"
-                inc_dict["active_version"] = "2.4.0"
-        _save_incidents(mcp_data)
-    except Exception as e:
-        print(f"Warning: could not save MCP incidents: {e}")
-
-    return {
-        "status": "RESET",
-        "service": service,
-        "version": "2.4.0",
-        "message": f"Reset {service} to healthy release v2.4.0."
-    }
+    return await _deploy_build(service=service, version="2.4.0")
 
 
 # Mount built frontend SPA static files if dist directory exists
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 if _FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
+
 

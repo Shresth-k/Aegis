@@ -1,5 +1,5 @@
 import React from 'react';
-import { Share2, Search, AlertCircle, Check, Flame, RotateCcw } from 'lucide-react';
+import { Share2, Search, AlertCircle, Check, Server, Bot } from 'lucide-react';
 import { IncidentState } from '../types';
 
 interface TopBarProps {
@@ -10,8 +10,10 @@ interface TopBarProps {
   incidents?: Array<{ incident_id: string; title: string; service: string; severity: string; status: string }>;
   currentIncidentId?: string;
   onSelectIncident?: (incidentId: string) => void;
-  onInjectChaos?: () => void;
-  onResetChaos?: () => void;
+  activeView?: 'aegis' | 'acmecloud';
+  onToggleView?: (view: 'aegis' | 'acmecloud') => void;
+  acmecloudVersion?: string;
+  acmecloudHealthy?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -22,11 +24,12 @@ export const TopBar: React.FC<TopBarProps> = ({
   incidents = [],
   currentIncidentId = 'INC-001',
   onSelectIncident,
-  onInjectChaos,
-  onResetChaos
+  activeView = 'aegis',
+  onToggleView,
+  acmecloudVersion = '2.4.0',
+  acmecloudHealthy = true
 }) => {
   const status = state?.status || 'OPEN';
-  const workflowBusy = isRunning || ['INVESTIGATING', 'PENDING_APPROVAL', 'REMEDIATING', 'VERIFYING'].includes(status);
 
   const getStatusBadge = () => {
     switch (status) {
@@ -101,27 +104,54 @@ export const TopBar: React.FC<TopBarProps> = ({
         {getStatusBadge()}
       </div>
 
-      {/* Right Action Tools & Controls */}
-      <div className="flex items-center gap-2 shrink-0">
-        {/* Chaos Injection and Reset Buttons */}
+      {/* Center View Switcher */}
+      <div className="flex items-center bg-[#18181b] border border-[#2e2e34] rounded-lg p-0.5">
         <button
-          onClick={onInjectChaos}
-          disabled={workflowBusy}
-          className="bg-[#1e1e24] hover:bg-red-950/60 text-red-300 hover:text-red-200 border border-red-900/40 hover:border-red-700/60 text-xs px-2.5 py-1.5 rounded-lg font-mono flex items-center gap-1.5 transition-all shadow-sm active:scale-[0.98]"
-          title="Inject Fault v2.4.1 (DB Connection Pool Starvation)"
+          onClick={() => onToggleView?.('aegis')}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
+            activeView === 'aegis'
+              ? 'bg-[#27272a] text-white font-medium shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
         >
-          <Flame className="w-3.5 h-3.5 text-red-400" />
-          <span className="hidden md:inline">Inject Chaos (v2.4.1)</span>
+          <Bot className="w-3.5 h-3.5 text-zinc-300" />
+          <span>Aegis SRE Copilot</span>
         </button>
 
         <button
-          onClick={onResetChaos}
-          disabled={workflowBusy}
-          className="bg-[#1e1e24] hover:bg-emerald-950/60 text-emerald-300 hover:text-emerald-200 border border-emerald-900/40 hover:border-emerald-700/60 text-xs px-2.5 py-1.5 rounded-lg font-mono flex items-center gap-1.5 transition-all shadow-sm active:scale-[0.98]"
-          title="Reset Service to Healthy Baseline v2.4.0"
+          onClick={() => onToggleView?.('acmecloud')}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
+            activeView === 'acmecloud'
+              ? 'bg-[#27272a] text-white font-medium shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
         >
-          <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden md:inline">Reset Baseline (v2.4.0)</span>
+          <Server className="w-3.5 h-3.5 text-zinc-300" />
+          <span>AcmeCloud Console</span>
+        </button>
+      </div>
+
+      {/* Right Action Tools & AcmeCloud Status Pill */}
+      <div className="flex items-center gap-2 shrink-0">
+        {/* AcmeCloud Infrastructure Status Pill */}
+        <button
+          onClick={() => onToggleView?.('acmecloud')}
+          className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all cursor-pointer ${
+            acmecloudHealthy
+              ? 'bg-[#16171d] hover:bg-[#1f2029] text-zinc-300 border-[#2f313f]'
+              : 'bg-red-950/40 hover:bg-red-900/50 text-red-200 border-red-800/60'
+          }`}
+          title="Click to open AcmeCloud Console and manage build deployments"
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${
+              acmecloudHealthy ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'
+            }`}
+          />
+          <span>AcmeCloud: v{acmecloudVersion}</span>
+          <span className="text-[10px] uppercase font-bold tracking-wider opacity-75">
+            [{acmecloudHealthy ? 'Healthy' : 'Fault'}]
+          </span>
         </button>
 
         {/* Search Bar */}
@@ -137,7 +167,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* Share Button */}
         <button
           onClick={onShare}
-          className="bg-[#1e1e1e] hover:bg-[#2a2a2a] text-[#ffffff] text-xs px-2.5 py-1.5 rounded-lg border border-[#3c3c3c] flex items-center gap-1.5 transition-all shrink-0 active:scale-[0.98]"
+          className="bg-[#1e1e1e] hover:bg-[#2a2a2a] text-[#ffffff] text-xs px-2.5 py-1.5 rounded-lg border border-[#3c3c3c] flex items-center gap-1.5 transition-all shrink-0 active:scale-[0.98] cursor-pointer"
         >
           <Share2 className="w-3.5 h-3.5 text-[#a1a1aa]" />
           <span className="hidden md:inline">Share</span>
@@ -151,3 +181,4 @@ export const TopBar: React.FC<TopBarProps> = ({
     </header>
   );
 };
+

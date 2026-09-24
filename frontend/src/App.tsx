@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { TopBar } from './components/TopBar';
 import { WorkflowCanvas } from './components/WorkflowCanvas';
 import { AgentStreamPanel } from './components/AgentStreamPanel';
+import { AcmeCloudConsole } from './components/AcmeCloudConsole';
 import { IncidentState, TraceEvent } from './types';
 
 export default function App() {
@@ -21,6 +22,9 @@ export default function App() {
   const [visibleNodeIds, setVisibleNodeIds] = useState<string[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<number>(0);
+  const [activeView, setActiveView] = useState<'aegis' | 'acmecloud'>('aegis');
+  const [acmecloudVersion, setAcmecloudVersion] = useState<string>('2.4.0');
+  const [acmecloudHealthy, setAcmecloudHealthy] = useState<boolean>(true);
 
   // Paced animation queue for real backend trace events
   const traceQueueRef = useRef<TraceEvent[]>([]);
@@ -389,34 +393,35 @@ export default function App() {
     }
   };
 
-  // Chaos injection handler
-  const handleInjectChaos = async () => {
+  // Fetch AcmeCloud infrastructure status
+  const fetchAcmeCloudStatus = useCallback(async () => {
     try {
-      await fetch('/api/chaos/inject?service=checkout-service&version=2.4.1', { method: 'POST' });
-      setVisibleNodeIds([]);
-      setActiveNodeId(null);
-      setSelectedNodeId(null);
-      setSessionKey((prev) => prev + 1);
-      await fetchIncident(currentIncidentId, false);
-      await fetchTraces(currentIncidentId);
+      const res = await fetch('/api/acmecloud/status');
+      if (res.ok) {
+        const data = await res.json();
+        setAcmecloudVersion(data.current_version || '2.4.0');
+        setAcmecloudHealthy(data.is_healthy ?? true);
+      }
     } catch (err) {
-      console.error('Failed to inject chaos:', err);
+      console.warn('Failed to fetch AcmeCloud status:', err);
     }
-  };
+  }, []);
 
-  // Reset baseline handler
-  const handleResetChaos = async () => {
-    try {
-      await fetch('/api/chaos/reset?service=checkout-service', { method: 'POST' });
-      setVisibleNodeIds([]);
-      setActiveNodeId(null);
-      setSelectedNodeId(null);
-      setSessionKey((prev) => prev + 1);
-      await fetchIncident(currentIncidentId, false);
-      await fetchTraces(currentIncidentId);
-    } catch (err) {
-      console.error('Failed to reset chaos:', err);
-    }
+  useEffect(() => {
+    fetchAcmeCloudStatus();
+    const interval = setInterval(fetchAcmeCloudStatus, 3500);
+    return () => clearInterval(interval);
+  }, [fetchAcmeCloudStatus]);
+
+  // Handle deploy event from AcmeCloud Console
+  const handleAcmeDeploySuccess = async (_version: string) => {
+    setVisibleNodeIds([]);
+    setActiveNodeId(null);
+    setSelectedNodeId(null);
+    setSessionKey((prev) => prev + 1);
+    await fetchIncident(currentIncidentId, false);
+    await fetchTraces(currentIncidentId);
+    await fetchAcmeCloudStatus();
   };
 
   const handleSendMessage = (msg: string) => {
@@ -444,39 +449,48 @@ export default function App() {
           setSessionKey((prev) => prev + 1);
           fetchIncident(id);
         }}
-        onInjectChaos={handleInjectChaos}
-        onResetChaos={handleResetChaos}
+        activeView={activeView}
+        onToggleView={setActiveView}
+        acmecloudVersion={acmecloudVersion}
+        acmecloudHealthy={acmecloudHealthy}
       />
 
-      {/* 2. Main Workspace (Canvas + Glassmorphic Agent Stream Panel) */}
-      <div className="flex-1 flex w-full overflow-hidden relative">
-        {/* Left Canvas Pane */}
-        <div className="flex-1 h-full relative overflow-hidden">
-          <WorkflowCanvas
+      {/* 2. Main Workspace (Aegis Workflow Canvas + Agent Stream OR AcmeCloud Console) */}
+      {activeView === 'acmecloud' ? (
+        <AcmeCloudConsole
+          onSwitchToAegis={() => setActiveView('aegis')}
+          onDeploySuccess={handleAcmeDeploySuccess}
+        />
+      ) : (
+        <div className="flex-1 flex w-full overflow-hidden relative">
+          {/* Left Canvas Pane */}
+          <div className="flex-1 h-full relative overflow-hidden">
+            <WorkflowCanvas
+              state={incidentState}
+              selectedNodeId={selectedNodeId}
+              onNodeSelect={setSelectedNodeId}
+              isRunning={isRunning}
+              visibleNodeIds={visibleNodeIds}
+              activeNodeId={activeNodeId}
+              onClearCanvas={handleClearCanvas}
+            />
+          </div>
+
+          {/* Right Glassmorphic Agent Stream Panel */}
+          <AgentStreamPanel
+            key={`${currentIncidentId}-${sessionKey}`}
             state={incidentState}
+            traces={traces}
             selectedNodeId={selectedNodeId}
-            onNodeSelect={setSelectedNodeId}
-            isRunning={isRunning}
+            onApprove={handleApprove}
+            isApproving={isApproving}
+            onSendMessage={handleSendMessage}
             visibleNodeIds={visibleNodeIds}
             activeNodeId={activeNodeId}
-            onClearCanvas={handleClearCanvas}
+            onChatResponse={handleChatResponse}
           />
         </div>
-
-        {/* Right Glassmorphic Agent Stream Panel */}
-        <AgentStreamPanel
-          key={`${currentIncidentId}-${sessionKey}`}
-          state={incidentState}
-          traces={traces}
-          selectedNodeId={selectedNodeId}
-          onApprove={handleApprove}
-          isApproving={isApproving}
-          onSendMessage={handleSendMessage}
-          visibleNodeIds={visibleNodeIds}
-          activeNodeId={activeNodeId}
-          onChatResponse={handleChatResponse}
-        />
-      </div>
+      )}
     </div>
   );
 }
