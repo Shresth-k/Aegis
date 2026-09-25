@@ -21,7 +21,7 @@ flowchart TD
     end
 
     subgraph AI["AI Reasoning Core"]
-        Gemini["Google Gemini LLM\n(gemini-3.5-flash-lite / 3.6-flash)\nFunction Calling & Synthesis"]
+        Gemini["Google Gemini LLM\n(gemini-3.5-flash-lite)\nFunction Calling & Synthesis"]
         JevTriage["Jev Incident Triage\n(Vercel AI Gateway / typesafe-ai/jev)"]
         JevReranker["Jev Noul Reranker\n(Vector-Free Semantic Matching)"]
     end

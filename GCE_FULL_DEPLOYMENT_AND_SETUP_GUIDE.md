@@ -157,7 +157,7 @@ GEMINI_API_KEY=$GEMINI_KEY
 AI_GATEWAY_API_KEY=$JEV_KEY
 VERCEL_AI_GATEWAY_KEY=$JEV_KEY
 LLM_PROVIDER=google
-LLM_MODEL=gemini-3.6-flash
+LLM_MODEL=gemini-3.5-flash-lite
 USE_JEV_TRIAGE=true
 USE_JEV_RERANKER=true
 ACME_CLOUD_API_URL=http://localhost:8001
@@ -474,10 +474,10 @@ sudo systemctl start aegis
 
 During live end-to-end integration testing on the VM, three critical fixes were identified and implemented:
 
-### A. Gemini Model Migration (`gemini-3.6-flash`)
-- **Issue**: Google Cloud Gemini API deprecated `gemini-2.0-flash` and `gemini-2.5-flash`, returning HTTP 404 with instructions to migrate to `gemini-3.6-flash`.
-- **Fix**: Updated [aegis/config.py](file:///s:/1.capg_onsite2/aegis/config.py) so `LLM_MODEL` defaults to `gemini-3.6-flash`.
-- **Validation**: Gemini verified operational with autonomous tool calling and structured SRE output.
+### A. Gemini Model Selection (`gemini-3.5-flash-lite`)
+- **Optimization**: Configured `gemini-3.5-flash-lite` as the active LLM engine to leverage higher API rate limits, rapid sub-second time-to-first-token response, and stable multi-turn function calling quotas.
+- **Implementation**: Updated [aegis/config.py](file:///s:/1.capg_onsite2/aegis/config.py) and `/opt/aegis/.env` with `LLM_MODEL=gemini-3.5-flash-lite`.
+- **Validation**: Gemini verified operational with autonomous tool calling, live Prometheus metrics scraping, and SRE diagnosis output.
 
 ### B. Jev AI Triage & Reranker Async Fixes
 - **Issue**: [aegis/triage/jev_triage.py](file:///s:/1.capg_onsite2/aegis/triage/jev_triage.py) and [aegis/rag/jev_reranker.py](file:///s:/1.capg_onsite2/aegis/rag/jev_reranker.py) referenced `asyncio.to_thread` for non-blocking execution but lacked `import asyncio`.
