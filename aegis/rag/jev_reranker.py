@@ -45,12 +45,13 @@ class JevReranker:
             target_url = "https://api.typesafe.ai/v1/systemone" if typesafe_key else "https://ai-gateway.vercel.sh/v1/evaluate"
             target_model = "jev-latest" if typesafe_key else "typesafe-ai/jev"
             try:
+                q_type = "noul" if typesafe_key else "boolean"
                 questions = {}
                 for d in documents:
                     did = get_id(d)
                     dtitle = get_title(d)
                     questions[f"relevance_{did}"] = {
-                        "type": "boolean",
+                        "type": q_type,
                         "instructions": f"Does the document titled '{dtitle}' describe the resolution or runbook for these symptoms: '{incident_symptoms}'?"
                     }
 
@@ -75,9 +76,9 @@ class JevReranker:
                         for d in documents:
                             did = get_id(d)
                             ans = answers.get(f"relevance_{did}", {})
-                            # Boolean primitive returns probability of true
-                            prob = ans.get("probability", ans.get("probabilities", {}).get("true", 0.5))
-                            set_score(d, prob)
+                            # TypeSafe native returns 'noul' probability; Vercel AI Gateway returns 'probability' or 'probabilities.true'
+                            prob = ans.get("noul", ans.get("probability", ans.get("probabilities", {}).get("true", 0.5)))
+                            set_score(d, float(prob))
                         documents.sort(key=get_score, reverse=True)
                         return documents
             except Exception as e:
