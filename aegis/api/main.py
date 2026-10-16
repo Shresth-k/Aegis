@@ -577,7 +577,6 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
         is_explicit_restart = any(k in msg for k in ["restart", "reboot", "recycle", "clear memory", "flush lock"])
         is_explicit_rollback = any(k in msg for k in ["rollback", "revert"])
 
-        from aegis.acme.client import acme_client
         acme_client._load_state()
         active_ver = acme_client._mock_state.get(service_name, {}).get("current_version", "2.4.1")
 
@@ -1239,7 +1238,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                             contents=contents,
                             config=config
                         ),
-                        timeout=5.0
+                        timeout=25.0
                     )
 
                 final_reply = response.text or ""
@@ -1258,13 +1257,24 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                                 contents=contents,
                                 config=config_synthesis
                             ),
-                            timeout=5.0
+                            timeout=25.0
                         )
                         if synth_response.text and len(synth_response.text.strip()) > 10:
                             final_reply = synth_response.text
                     except Exception as synth_err:
                         if settings.DEBUG:
                             print(f"[Synthesis warning]: {synth_err}")
+
+                # Ensure active version and health telemetry are resolved
+                health = await acme_client.get_service_health(service_name)
+                active_ver = health.get("version", "2.4.0")
+                is_healthy = health.get("healthy", True)
+                err_rate = health.get("error_rate", 0.0)
+
+                default_gate_action = None
+                default_gate_target = None
+                default_gate_risk = None
+                default_gate_reason = None
 
                 # If still empty or minimal, build structured synthesis from executed tools
                 if not final_reply or len(final_reply.strip()) < 20:
@@ -1287,10 +1297,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                         elif t_name == "evaluate_policy" and isinstance(t_out, dict):
                             tool_summaries.append(f"• **Policy Guardrail**: Proposed action `{t_out.get('action')}` is {t_out.get('risk_level', 'HIGH')} risk ({t_out.get('decision', 'REQUIRE_APPROVAL')}).")
 
-                    health = await acme_client.get_service_health(service_name)
-                    active_ver = health.get("version", "2.4.0")
-                    is_healthy = health.get("healthy", True)
-                    err_rate = health.get("error_rate", 0.0)
+                    summary_bullets = "\n".join(tool_summaries) if tool_summaries else "• Probes completed successfully across service telemetry and logs."
 
                     if active_ver in ["2.4.0", "baseline"] and (is_healthy or err_rate < 0.01):
                         diag_text = f"Checkout service is operating nominally on baseline release v{active_ver}. Telemetry confirms nominal error rate ({err_rate:.2%}) and healthy database pool allocation. No active degradation detected."
@@ -1351,13 +1358,12 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 elif active_ver in ["2.4.0", "baseline"]:
                     policy_gate_data = None
 
-                if not policy_gate_data and any(k in reply_lower for k in [
+                if not policy_gate_data and active_ver not in ["2.4.0", "baseline"] and any(k in reply_lower for k in [
                     "approve or reject", "operator approval", "human authorization",
                     "human operator approval", "requires approval", "requires explicit operator approval",
                     "please approve", "human-in-the-loop", "should i proceed", "please confirm"
                 ]):
                     is_restart_gate = "docker_restart_container" in reply_lower or "restart container" in reply_lower or "restarting the checkout-service" in reply_lower
-                    from aegis.acme.client import acme_client
                     acme_client._load_state()
                     active_ver = acme_client._mock_state.get(service_name, {}).get("current_version", "2.4.1")
                     if active_ver in ["2.4.2", "2.4.3"] or is_restart_gate:
