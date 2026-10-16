@@ -631,7 +631,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
             reply = (
                 f"**Container Restart Executed & Verified Successfully:**\n\n"
                 f"- **Action**: `docker_restart_container` on `{target_container}`\n"
-                f"- **Status**: `SUCCESS` — Container restarted; runtime memory heap cache cleared to 120MB and worker thread pool restored.\n"
+                f"- **Status**: `SUCCESS` -- Container restarted; runtime memory heap cache cleared to 120MB and worker thread pool restored.\n"
                 f"- **SLO Verification**: Nominal health restored. Error rate is `{res_verify.get('error_rate', 0.002):.2%}` and P95 latency dropped to `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n"
                 f"- **Policy Note**: Code rollback was **not required** because the release binary was stable and the fault was isolated to runtime state.\n\n"
                 f"Incident **{req.incident_id}** is now **RESOLVED**."
@@ -684,7 +684,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
             reply = (
                 f"**Remediation Executed & Verified Successfully:**\n\n"
                 f"- **Action**: `rollback_deployment` to `v2.4.0` on `{service_name}`\n"
-                f"- **Status**: `SUCCESS` — Replaced faulty container `v2.4.1` with stable baseline `v2.4.0`.\n"
+                f"- **Status**: `SUCCESS` -- Replaced faulty container `v2.4.1` with stable baseline `v2.4.0`.\n"
                 f"- **SLO Verification**: Nominal health restored. Error rate dropped to `{res_verify.get('error_rate', 0.002):.2%}` (< 1%) and P95 latency is `{res_verify.get('latency_ms', 42.5):.1f}ms`.\n\n"
                 f"Incident **{req.incident_id}** is now **RESOLVED**."
             )
@@ -805,9 +805,9 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 for r in parallel_results
             ])
             + f"\n\n**DAG Flow Architecture:**\n"
-            f"• **Fan-out**: Upstream test branched simultaneously into {parallel_count} parallel execution nodes (`{'`, `'.join([r[4] for r in parallel_results])}`).\n"
-            f"• **Convergence**: All {parallel_count} streams synchronized and converged into the `diagnose` cognitive stage.\n"
-            f"• **Finding**: Connection pool starvation is uniform across all {parallel_count} worker partitions."
+            f"- **Fan-out**: Upstream test branched simultaneously into {parallel_count} parallel execution nodes (`{'`, `'.join([r[4] for r in parallel_results])}`).\n"
+            f"- **Convergence**: All {parallel_count} streams synchronized and converged into the `diagnose` cognitive stage.\n"
+            f"- **Finding**: Connection pool starvation is uniform across all {parallel_count} worker partitions."
         )
 
         async for chunk in emit_text(reply):
@@ -1283,21 +1283,21 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                         t_name = tc.get("name")
                         t_out = tc.get("output", {})
                         if t_name == "triage_incident" and isinstance(t_out, dict):
-                            tool_summaries.append(f"• **Triage**: Classified as `{t_out.get('severity', 'P1')}` severity in `{t_out.get('domain', 'database')}` domain.")
+                            tool_summaries.append(f"- **Triage**: Classified as `{t_out.get('severity', 'P1')}` severity in `{t_out.get('domain', 'database')}` domain.")
                         elif t_name == "get_metrics" and isinstance(t_out, dict):
-                            tool_summaries.append(f"• **Telemetry**: Error rate `{t_out.get('error_rate', 0.0):.1%}`, P95 latency `{t_out.get('latency_p95_ms', 0):.0f}ms`, connection pool `{t_out.get('db_pool_active', 0)}/{t_out.get('db_pool_max', 50)}`.")
+                            tool_summaries.append(f"- **Telemetry**: Error rate `{t_out.get('error_rate', 0.0):.1%}`, P95 latency `{t_out.get('latency_p95_ms', 0):.0f}ms`, connection pool `{t_out.get('db_pool_active', 0)}/{t_out.get('db_pool_max', 50)}`.")
                         elif t_name == "get_service_logs" and isinstance(t_out, dict):
                             logs = t_out.get("logs", [])
                             log_str = f"`{logs[0]}`" if logs else "Connection timeout exceptions detected."
-                            tool_summaries.append(f"• **Logs**: {log_str}")
+                            tool_summaries.append(f"- **Logs**: {log_str}")
                         elif t_name == "search_runbooks" and isinstance(t_out, dict):
                             rbs = t_out.get("runbooks", [])
                             if rbs:
-                                tool_summaries.append(f"• **Knowledge**: Matched Runbook `{rbs[0].get('doc_id')}` ({rbs[0].get('title')}).")
+                                tool_summaries.append(f"- **Knowledge**: Matched Runbook `{rbs[0].get('doc_id')}` ({rbs[0].get('title')}).")
                         elif t_name == "evaluate_policy" and isinstance(t_out, dict):
-                            tool_summaries.append(f"• **Policy Guardrail**: Proposed action `{t_out.get('action')}` is {t_out.get('risk_level', 'HIGH')} risk ({t_out.get('decision', 'REQUIRE_APPROVAL')}).")
+                            tool_summaries.append(f"- **Policy Guardrail**: Proposed action `{t_out.get('action')}` is {t_out.get('risk_level', 'HIGH')} risk ({t_out.get('decision', 'REQUIRE_APPROVAL')}).")
 
-                    summary_bullets = "\n".join(tool_summaries) if tool_summaries else "• Probes completed successfully across service telemetry and logs."
+                    summary_bullets = "\n".join(tool_summaries) if tool_summaries else "- Probes completed successfully across service telemetry and logs."
 
                     if active_ver in ["2.4.0", "baseline"] and (is_healthy or err_rate < 0.01):
                         diag_text = f"Checkout service is operating nominally on baseline release v{active_ver}. Telemetry confirms nominal error rate ({err_rate:.2%}) and healthy database pool allocation. No active degradation detected."
@@ -1459,7 +1459,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
 
         yield ("done", {
             "reply": reply_str,
-            "thinking": "",  # Pure tool call — no fake thinking accordion
+            "thinking": "",  # Pure tool call -- no fake thinking accordion
             "tool_call": tool_calls_executed[0],
             "tool_calls": tool_calls_executed,
             "new_nodes": list(dict.fromkeys(spawned_nodes)),
@@ -1716,13 +1716,13 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
         evidence_bullets = "\n".join(f"- {e}" for e in (diagnosis.evidence_summary or []))
         reply = (
             f"**Autonomous Investigation Complete for `{service_name}` ({req.incident_id}):**\n\n"
-            f"• **Triage Classification**: `{res_triage.get('domain', 'database')}` domain, `{res_triage.get('severity', 'P1')}` severity ({res_triage.get('confidence', 0.94):.0%} confidence)\n"
-            f"• **Telemetry Findings**:\n"
+            f"- **Triage Classification**: `{res_triage.get('domain', 'database')}` domain, `{res_triage.get('severity', 'P1')}` severity ({res_triage.get('confidence', 0.94):.0%} confidence)\n"
+            f"- **Telemetry Findings**:\n"
             f"  - Error Rate: `{res_metrics.get('error_rate', 0.385):.1%}`\n"
             f"  - P95 Latency: `{res_metrics.get('latency_p95_ms', 2850):.0f}ms`\n"
             f"  - DB Active Connections: `{res_metrics.get('db_pool_active', 5)} / {res_metrics.get('db_pool_max', 5)}` (100% saturated)\n"
             f"  - Logs: `connection pool exhausted for checkout-service`\n"
-            f"• **Matched Runbook**: `RB-001` (Database Connection Pool Exhaustion Runbook)\n\n"
+            f"- **Matched Runbook**: `RB-001` (Database Connection Pool Exhaustion Runbook)\n\n"
             f"**Root Cause Diagnosis:**\n"
             f"{diagnosis.root_cause}\n\n"
             f"**Evidence Summary:**\n{evidence_bullets}\n\n"
@@ -1779,17 +1779,17 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
             state.status = "RESOLVED"
         reply_str = (
             f"Service `{service_name}` is currently operating **NOMINALLY** on baseline release `v{actual_ver}`.\n\n"
-            f"• **Health**: Healthy (Zero active degradation alerts).\n"
-            f"• **Telemetry**: Normal error rates ({err_rate:.2%}) and 50 connection pool capacity.\n"
-            f"• **Remediation**: No actions required. Service is compliant with operational SLOs."
+            f"- **Health**: Healthy (Zero active degradation alerts).\n"
+            f"- **Telemetry**: Normal error rates ({err_rate:.2%}) and 50 connection pool capacity.\n"
+            f"- **Remediation**: No actions required. Service is compliant with operational SLOs."
         )
         policy_gate_fallback = None
     elif actual_ver == "2.4.2":
         reply_str = (
             f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
-            f"• **Diagnosis**: Heap memory leak in worker session cache (release v2.4.2).\n"
-            f"• **Recommended Action**: `docker_restart_container` on `{service_name}` to recycle heap memory.\n"
-            f"• **Policy Guardrail**: Container restart clears memory without requiring code rollback."
+            f"- **Diagnosis**: Heap memory leak in worker session cache (release v2.4.2).\n"
+            f"- **Recommended Action**: `docker_restart_container` on `{service_name}` to recycle heap memory.\n"
+            f"- **Policy Guardrail**: Container restart clears memory without requiring code rollback."
         )
         policy_gate_fallback = {
             "action": "docker_restart_container",
@@ -1802,9 +1802,9 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
     elif actual_ver == "2.4.3":
         reply_str = (
             f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
-            f"• **Diagnosis**: PostgreSQL transaction deadlock contention on orders table (release v2.4.3).\n"
-            f"• **Recommended Action**: `docker_restart_container` on `acmecloud-postgres` to clear locks.\n"
-            f"• **Policy Guardrail**: Restarting database flushes conflicting locks."
+            f"- **Diagnosis**: PostgreSQL transaction deadlock contention on orders table (release v2.4.3).\n"
+            f"- **Recommended Action**: `docker_restart_container` on `acmecloud-postgres` to clear locks.\n"
+            f"- **Policy Guardrail**: Restarting database flushes conflicting locks."
         )
         policy_gate_fallback = {
             "action": "docker_restart_container",
@@ -1822,9 +1822,9 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
         )
         reply_str = (
             f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
-            f"• **Diagnosis**: {state.diagnosis.root_cause if state and state.diagnosis else f'Database connection pool starvation following release v{actual_ver}.'}\n"
-            f"• **Recommended Action**: `{rec_action}`\n"
-            f"• **Policy Guardrail**: `PROD_ROLLBACK_APPROVAL` requires operator authorization."
+            f"- **Diagnosis**: {state.diagnosis.root_cause if state and state.diagnosis else f'Database connection pool starvation following release v{actual_ver}.'}\n"
+            f"- **Recommended Action**: `{rec_action}`\n"
+            f"- **Policy Guardrail**: `PROD_ROLLBACK_APPROVAL` requires operator authorization."
         )
         policy_gate_fallback = {
             "action": "rollback_deployment",
