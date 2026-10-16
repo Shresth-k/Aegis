@@ -91,7 +91,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
       id: 'welcome-1',
       role: 'assistant',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      text: 'Aegis online. Standing by for incident **INC-001** (`checkout-service`).\n\nChat here to initiate an investigation, inspect telemetry, or instruct remediation.'
+      text: 'Aegis online. Autonomous SRE Copilot ready for **checkout-service**.\n\nChat here to inspect telemetry, ask operational questions, or investigate incidents.'
     }
   ]);
 

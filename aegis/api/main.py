@@ -288,12 +288,15 @@ async def tool_get_metrics(service: str, state: Optional[IncidentState] = None, 
         "latency_ms": elapsed_ms
     })
     if state:
+        health_info = await acme_client.get_service_health(service)
+        curr_v = health_info.get("version", "2.4.0")
+        is_recent_fault = curr_v not in ["2.4.0", "baseline"]
         if not state.evidence:
             state.evidence = TelemetryEvidence(
                 service=service,
-                current_version="2.4.1",
+                current_version=curr_v,
                 previous_version="2.4.0",
-                recent_deployment=True,
+                recent_deployment=is_recent_fault,
                 metrics=metrics,
                 error_logs=[],
                 dependencies=["postgres", "inventory-service", "payment-service", "redis"],
@@ -301,6 +304,7 @@ async def tool_get_metrics(service: str, state: Optional[IncidentState] = None, 
             )
         else:
             state.evidence.metrics = metrics
+            state.evidence.current_version = curr_v
     return metrics_out, ["tool-metrics"]
 
 
@@ -315,12 +319,15 @@ async def tool_get_service_logs(service: str, state: Optional[IncidentState] = N
         "latency_ms": elapsed_ms
     })
     if state:
+        health_info = await acme_client.get_service_health(service)
+        curr_v = health_info.get("version", "2.4.0")
+        is_recent_fault = curr_v not in ["2.4.0", "baseline"]
         if not state.evidence:
             state.evidence = TelemetryEvidence(
                 service=service,
-                current_version="2.4.1",
+                current_version=curr_v,
                 previous_version="2.4.0",
-                recent_deployment=True,
+                recent_deployment=is_recent_fault,
                 metrics={},
                 error_logs=logs,
                 dependencies=["postgres", "inventory-service", "payment-service", "redis"],
@@ -328,6 +335,7 @@ async def tool_get_service_logs(service: str, state: Optional[IncidentState] = N
             )
         else:
             state.evidence.error_logs = logs
+            state.evidence.current_version = curr_v
     return {
         "service": service,
         "log_count": len(logs),
@@ -1033,6 +1041,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                 "When the operator asks about Docker, running containers, or 'docker stuff', DO NOT REFUSE. You have full authorized access to Docker daemon inspection tools. Immediately call docker_ps() to list containers, or docker_logs() to retrieve logs, and present the container IDs, image names, ports, and status.\n"
                 "When investigating an incident (e.g. user says 'start', 'investigate', 'what is wrong', 'diagnose', or asks for status), autonomously call the tools to inspect triage, metrics, logs, runbooks, and evaluate policy.\n"
                 "DIAGNOSTIC & REMEDIATION MATRIX ACROSS USECASES:\n"
+                "- Baseline Release (v2.4.0): Nominal error rate (<0.01%), DB connection pool at 50 max, service healthy. No degradation and no remediation required. State clearly that the platform is healthy and within SLO targets.\n"
                 "- DB Connection Pool Starvation (v2.4.1): Connection pool throttled to 5. Root cause is faulty deployment configuration. Remediate via evaluate_policy then rollback_deployment(service, '2.4.0') with operator approval.\n"
                 "- Memory Leak / Heap Exhaustion (v2.4.2): Monotonic heap memory growth (94%+), GC thrashing, worker thread latency. The code is stable but runtime heap is exhausted. Remediate via docker_restart_container('acmecloud-checkout'). Rollback is NOT required.\n"
                 "- Database Lock Contention / Deadlock (v2.4.3): ExclusiveLock transaction deadlocks on orders table. Remediate via docker_restart_container('acmecloud-postgres') to clear database transaction locks. Rollback of checkout is NOT required.\n"
@@ -1049,9 +1058,19 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     role = "user" if h.get("role") == "user" else "model"
                     history_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=h.get("text", ""))]))
 
+            live_health = await acme_client.get_service_health(service_name)
+            live_ver = live_health.get("version", "2.4.0")
+            live_is_healthy = live_ver in ["2.4.0", "baseline"] and live_health.get("healthy", True)
+            current_status = "RESOLVED" if (live_is_healthy and (not state or state.status != "OPEN")) else (state.status if state else "OPEN")
+
+            if live_is_healthy:
+                context_line = f"Service: {service_name} | Active Version: v{live_ver} | System Status: NOMINAL / HEALTHY (No degradation detected)."
+            else:
+                context_line = f"Incident: {req.incident_id} on {service_name} | Active Version: v{live_ver} | Status: {current_status}."
+
             user_content = types.Content(
                 role="user",
-                parts=[types.Part.from_text(text=f"Incident: {req.incident_id} on {service_name}. Current Status: {state.status if state else 'OPEN'}.\n\nOperator message: {req.message}")]
+                parts=[types.Part.from_text(text=f"{context_line}\n\nOperator message: {req.message}")]
             )
 
             contents = [*history_contents, user_content]
@@ -1268,11 +1287,19 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                         elif t_name == "evaluate_policy" and isinstance(t_out, dict):
                             tool_summaries.append(f"• **Policy Guardrail**: Proposed action `{t_out.get('action')}` is {t_out.get('risk_level', 'HIGH')} risk ({t_out.get('decision', 'REQUIRE_APPROVAL')}).")
 
-                    from aegis.acme.client import acme_client
-                    acme_client._load_state()
-                    active_ver = acme_client._mock_state.get(service_name, {}).get("current_version", "2.4.1")
+                    health = await acme_client.get_service_health(service_name)
+                    active_ver = health.get("version", "2.4.0")
+                    is_healthy = health.get("healthy", True)
+                    err_rate = health.get("error_rate", 0.0)
 
-                    if active_ver == "2.4.2":
+                    if active_ver in ["2.4.0", "baseline"] and (is_healthy or err_rate < 0.01):
+                        diag_text = f"Checkout service is operating nominally on baseline release v{active_ver}. Telemetry confirms nominal error rate ({err_rate:.2%}) and healthy database pool allocation. No active degradation detected."
+                        rec_text = "No remediation needed. Service is healthy and compliant with operational SLOs."
+                        default_gate_action = None
+                        default_gate_target = None
+                        default_gate_risk = None
+                        default_gate_reason = None
+                    elif active_ver == "2.4.2":
                         diag_text = "The service is suffering from a memory leak in the worker session cache. Monotonic heap growth (94%+ of 1024MB limit) is triggering severe garbage collection pauses (1850ms) and elevated response latency."
                         rec_text = "Restart checkout container (`docker_restart_container`) to recycle heap memory. Code rollback is NOT required. Please confirm: Should I proceed with restarting the checkout-service container?"
                         default_gate_action = "docker_restart_container"
@@ -1294,7 +1321,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                         default_gate_risk = "HIGH"
                         default_gate_reason = "Production rollback requires human operator approval."
                     else:
-                        diag_text = "The service is suffering from database connection pool saturation. Under production traffic, connection acquisition times out resulting in elevated HTTP 500 error rates."
+                        diag_text = f"The service is suffering from database connection pool saturation following release v{active_ver}. Under production traffic, connection acquisition times out resulting in elevated HTTP 500 error rates."
                         rec_text = "Roll back deployment configuration to stable baseline `v2.4.0`. Production rollback requires operator sign-off. Please approve or reject below to proceed."
                         default_gate_action = "rollback_deployment"
                         default_gate_target = "2.4.0"
@@ -1312,6 +1339,18 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     )
 
                 reply_lower = final_reply.lower()
+                if default_gate_action and not policy_gate_data:
+                    policy_gate_data = {
+                        "action": default_gate_action,
+                        "service": service_name,
+                        "target_version": default_gate_target,
+                        "risk_level": default_gate_risk,
+                        "requires_approval": True,
+                        "reason": default_gate_reason
+                    }
+                elif active_ver in ["2.4.0", "baseline"]:
+                    policy_gate_data = None
+
                 if not policy_gate_data and any(k in reply_lower for k in [
                     "approve or reject", "operator approval", "human authorization",
                     "human operator approval", "requires approval", "requires explicit operator approval",
