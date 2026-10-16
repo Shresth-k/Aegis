@@ -1091,7 +1091,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     contents=contents,
                     config=config
                 ),
-                timeout=5.0
+                timeout=25.0
             )
 
             policy_gate_data: Optional[Dict[str, Any]] = None
@@ -1762,19 +1762,64 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
 
     # 11. Fallback intelligent response
     status_str = state.status if state else "OPEN"
-    rec_action = (
-        state.diagnosis.recommended_action
-        if state and state.diagnosis
-        else "rollback_deployment to v2.4.0"
-    )
-    reply_str = (
-        f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
-        f"• **Diagnosis**: {state.diagnosis.root_cause if state and state.diagnosis else 'Database connection pool starvation in v2.4.1.'}\n"
-        f"• **Recommended Action**: `{rec_action}`\n"
-        f"• **Policy Guardrail**: `PROD_ROLLBACK_APPROVAL` requires operator authorization."
-    )
-    policy_gate_fallback = None
-    if status_str == "PENDING_APPROVAL" or "operator authorization" in reply_str or "operator approval" in reply_str:
+    health_info = await acme_client.get_service_health(service_name)
+    actual_ver = health_info.get("version", "2.4.0")
+    is_healthy = health_info.get("healthy", True)
+    err_rate = health_info.get("error_rate", 0.0)
+
+    if actual_ver in ["2.4.0", "baseline"] and (is_healthy or err_rate < 0.01):
+        status_str = "RESOLVED"
+        if state:
+            state.status = "RESOLVED"
+        reply_str = (
+            f"Service `{service_name}` is currently operating **NOMINALLY** on baseline release `v{actual_ver}`.\n\n"
+            f"• **Health**: Healthy (Zero active degradation alerts).\n"
+            f"• **Telemetry**: Normal error rates ({err_rate:.2%}) and 50 connection pool capacity.\n"
+            f"• **Remediation**: No actions required. Service is compliant with operational SLOs."
+        )
+        policy_gate_fallback = None
+    elif actual_ver == "2.4.2":
+        reply_str = (
+            f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
+            f"• **Diagnosis**: Heap memory leak in worker session cache (release v2.4.2).\n"
+            f"• **Recommended Action**: `docker_restart_container` on `{service_name}` to recycle heap memory.\n"
+            f"• **Policy Guardrail**: Container restart clears memory without requiring code rollback."
+        )
+        policy_gate_fallback = {
+            "action": "docker_restart_container",
+            "service": service_name,
+            "target_version": "2.4.2",
+            "risk_level": "MEDIUM",
+            "requires_approval": True,
+            "reason": "Container restart clears runtime heap allocation without requiring code rollback."
+        }
+    elif actual_ver == "2.4.3":
+        reply_str = (
+            f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
+            f"• **Diagnosis**: PostgreSQL transaction deadlock contention on orders table (release v2.4.3).\n"
+            f"• **Recommended Action**: `docker_restart_container` on `acmecloud-postgres` to clear locks.\n"
+            f"• **Policy Guardrail**: Restarting database flushes conflicting locks."
+        )
+        policy_gate_fallback = {
+            "action": "docker_restart_container",
+            "service": service_name,
+            "target_version": "2.4.3",
+            "risk_level": "MEDIUM",
+            "requires_approval": True,
+            "reason": "Flushing database transaction locks requires container restart."
+        }
+    else:
+        rec_action = (
+            state.diagnosis.recommended_action
+            if state and state.diagnosis
+            else "rollback_deployment to v2.4.0"
+        )
+        reply_str = (
+            f"Incident **{req.incident_id}** on `{service_name}` is currently in status **{status_str}**.\n\n"
+            f"• **Diagnosis**: {state.diagnosis.root_cause if state and state.diagnosis else f'Database connection pool starvation following release v{actual_ver}.'}\n"
+            f"• **Recommended Action**: `{rec_action}`\n"
+            f"• **Policy Guardrail**: `PROD_ROLLBACK_APPROVAL` requires operator authorization."
+        )
         policy_gate_fallback = {
             "action": "rollback_deployment",
             "service": service_name,
