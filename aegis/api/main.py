@@ -1330,7 +1330,7 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                             "requires_approval": True,
                             "reason": "Container restart clears runtime heap allocation without requiring code rollback."
                         }
-                    else:
+                    elif active_ver not in ["2.4.0", "baseline"]:
                         policy_gate_data = {
                             "action": "rollback_deployment",
                             "service": service_name,
@@ -1339,6 +1339,8 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                             "requires_approval": True,
                             "reason": "Production rollback requires human operator approval."
                         }
+                    else:
+                        policy_gate_data = None
                 final_status = state.status if state else "OPEN"
                 if policy_gate_data:
                     final_status = "PENDING_APPROVAL"
@@ -1366,22 +1368,6 @@ async def run_copilot_pipeline(req: ChatRequest, stream_words: bool = True):
                     reply_lower = reply_text.lower()
                     policy_gate_direct = None
                     direct_status = state.status if state else "OPEN"
-                    if any(k in reply_lower for k in [
-                        "approve or reject", "operator approval", "human authorization",
-                        "human operator approval", "requires approval", "requires explicit operator approval",
-                        "please approve", "human-in-the-loop"
-                    ]):
-                        policy_gate_direct = {
-                            "action": "rollback_deployment",
-                            "service": service_name,
-                            "target_version": "2.4.0",
-                            "risk_level": "HIGH",
-                            "requires_approval": True,
-                            "reason": "Production rollback requires human operator approval."
-                        }
-                        direct_status = "PENDING_APPROVAL"
-                        if state:
-                            state.status = "PENDING_APPROVAL"
 
                     async for chunk in emit_text(reply_text):
                         yield chunk

@@ -117,8 +117,14 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
   // Helper to determine if a message contains a policy gate awaiting approval
   const getPolicyGate = useCallback(
     (msg: ChatTurn): PolicyGateData | null => {
+      // 1. If backend explicitly returned a structured policy gate
       if (msg.policyGate && msg.policyGate.requires_approval) return msg.policyGate;
       if (msg.role !== 'assistant') return null;
+
+      // 2. Only consider messages that actually executed tools during an investigation
+      const hasTools = (msg.toolCalls && msg.toolCalls.length > 0) || Boolean(msg.toolCall);
+      if (!hasTools && !msg.policyGate) return null;
+
       const t = (msg.text || '').toLowerCase();
       const isRestartAction =
         t.includes('docker_restart_container') ||
@@ -127,17 +133,14 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
         t.includes('restarting the checkout-service') ||
         t.includes('recycle heap');
       const isApprovalText =
-        t.includes('approve or reject') ||
-        t.includes('operator approval') ||
-        t.includes('human authorization') ||
-        t.includes('human operator approval') ||
-        t.includes('requires explicit operator approval') ||
-        t.includes('requires operator approval') ||
-        t.includes('please approve or reject') ||
-        t.includes('please approve') ||
-        t.includes('please confirm') ||
-        t.includes('should i proceed') ||
-        (t.includes('requires_approval: true') && (t.includes('rollback') || t.includes('remediat') || t.includes('restart')));
+        (t.includes('approve or reject') ||
+         t.includes('please approve') ||
+         t.includes('requires explicit operator approval') ||
+         t.includes('requires operator approval') ||
+         t.includes('please confirm rollback') ||
+         t.includes('should i proceed with rollback') ||
+         t.includes('requires_approval: true')) &&
+        (t.includes('rollback') || t.includes('restart') || t.includes('remediat'));
       if (!isApprovalText) return null;
       if (isRestartAction) {
         return {
@@ -700,7 +703,7 @@ export const AgentStreamPanel: React.FC<AgentStreamPanelProps> = ({
                     </div>
 
                     {/* Inline Policy Status / Confirmation (Shown upon resolution or rejection) */}
-                    {!isUser && gate && (
+                    {!isUser && gate && (msg.policyGate?.requires_approval || tools.length > 0) && (
                       status === 'RESOLVED' || state?.approval_granted ? (
                         <div className="bg-[#141418] border border-emerald-900/40 rounded-xl p-2.5 text-xs text-emerald-300 flex items-center gap-2 mt-2">
                           <Check className="w-4 h-4 text-emerald-400 shrink-0" />
