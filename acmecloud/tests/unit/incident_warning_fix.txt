@@ -1,0 +1,9 @@
+# In tests/unit/test_incident_creation.py, replace:
+#
+#     incident.model_fields
+#
+# with:
+#
+#     Incident.model_fields
+#
+# This removes the Pydantic 2.11 deprecation warnings.

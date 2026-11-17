@@ -1,0 +1,93 @@
+steps:
+  # 1. Run Python Unit & Integration Tests
+  - name: 'python:3.12-slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install -r requirements.txt pytest
+        pytest tests/test_api.py tests/test_closed_loop.py -v
+    env:
+      - 'MOCK_ACME_CLOUD=true'
+      - 'LLM_PROVIDER=mock'
+
+  # 2. Build Aegis FastAPI Backend
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.api'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-api:$COMMIT_SHA'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-api:latest'
+      - '.'
+
+  # 3. Build Aegis Mission Control Frontend
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-frontend:$COMMIT_SHA'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-frontend:latest'
+      - 'frontend'
+
+  # 4. Build Acme Storefront
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/acme-store:$COMMIT_SHA'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/acme-store:latest'
+      - 'acmecloud/frontend'
+
+  # 5. Build AcmeCloud Checkout Microservice
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'acmecloud/simulator/services/checkout/Dockerfile'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/acmecloud-checkout:$COMMIT_SHA'
+      - '-t'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/acmecloud-checkout:latest'
+      - 'acmecloud'
+
+  # 6. Push Images to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-api:latest']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-frontend:latest']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/acme-store:latest']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/acmecloud-checkout:latest']
+
+  # 7. Deploy Aegis API to Cloud Run (with SSE streaming flags)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'aegis-api'
+      - '--image=$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO_NAME/aegis-api:latest'
+      - '--region=$_REGION'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--min-instances=1'
+      - '--max-instances=10'
+      - '--cpu=2'
+      - '--memory=2Gi'
+      - '--timeout=3600'
+      - '--session-affinity'
+      - '--no-cpu-throttling'
+      - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,AI_GATEWAY_API_KEY=AI_GATEWAY_API_KEY:latest'
+
+substitutions:
+  _REGION: 'us-central1'
+  _REPO_NAME: 'aegis-repo'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

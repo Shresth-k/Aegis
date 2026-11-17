@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from typing import List
@@ -43,11 +44,17 @@ class DiagnosisAgent:
                 RELEVANT RUNBOOKS:
                 {chr(10).join(f"- {rb.title}: {rb.content}" for rb in runbooks)}
                 
+                ALLOWED REMEDIATION ACTIONS:
+                - 'rollback_deployment': Revert service to previous known healthy version (required if recent deployment introduced the regression, per runbook RB-001).
+                - 'restart_service': Restart container/service (if process is deadlocked, connection pool is hung, or memory leak, but code version itself is nominal).
+                - 'escalate_to_human': Escalate if cause is ambiguous or unresolvable automatically.
+                Do NOT invent actions outside these supported platform operations.
+                
                 Return a JSON object with:
                 - root_cause (string: concise root cause description)
                 - confidence (float between 0.0 and 1.0)
                 - evidence_summary (list of strings: evidence items supporting diagnosis)
-                - recommended_action (string: e.g. 'rollback_deployment')
+                - recommended_action (string: must be one of 'rollback_deployment', 'restart_service', 'escalate_to_human')
                 - action_parameters (object: e.g. {{"service": "{evidence.service}", "target_version": "{evidence.previous_version or '2.4.0'}"}})
                 - reasoning (string: step-by-step explanation of why this action resolves the issue)
                 """
@@ -60,19 +67,33 @@ class DiagnosisAgent:
                     )
                 )
 
-                response = client.models.generate_content(
-                    model=settings.LLM_MODEL,
-                    contents=prompt,
-                    config=config
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.models.generate_content,
+                        model=settings.LLM_MODEL,
+                        contents=prompt,
+                        config=config
+                    ),
+                    timeout=5.0
                 )
                 data = json.loads(response.text)
+                if data.get("recommended_action") not in {"rollback_deployment", "restart_service", "escalate_to_human"}:
+                    data["recommended_action"] = "escalate_to_human"
+                    data["action_parameters"] = {"service": evidence.service}
+                    data["reasoning"] = "The model proposed an action this platform cannot safely execute; escalating for human review."
                 return DiagnosisResult(**data)
             except Exception as e:
                 if settings.DEBUG:
                     print(f"[Diagnosis Gemini CoT warning] Falling back: {e}")
 
         # 2. Deterministic Grounded Reasoning Fallback (Safety net)
-        has_db_pool_errors = any("connection pool" in log.lower() or "timeout acquiring db" in log.lower() for log in evidence.error_logs)
+        has_db_pool_errors = (
+            any(
+                any(k in log.lower() for k in ["connection pool", "timeout acquiring db", "queuepool", "psycopg2", "pool limit", "remaining connection slots", "exhaustion", "500"])
+                for log in evidence.error_logs
+            )
+            or (evidence.metrics.get("db_pool_active", 0) >= evidence.metrics.get("db_pool_max", 5) and evidence.metrics.get("error_rate", 0) > 0.05)
+        )
 
         if evidence.recent_deployment and has_db_pool_errors:
             target = evidence.previous_version or "2.4.0"

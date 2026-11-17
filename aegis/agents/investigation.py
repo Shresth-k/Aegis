@@ -1,6 +1,8 @@
 from typing import Dict, Any
 from aegis.core.state import TelemetryEvidence
+from aegis.config import settings
 from aegis.acme.client import acme_client
+from aegis.mcp.client import mcp_client
 
 class InvestigationAgent:
     """
@@ -17,11 +19,13 @@ class InvestigationAgent:
         previous_version = deploy_info.get("previous_version")
         recent_deployment = deploy_info.get("recent_deployment", False)
 
-        # 2. Query metrics
-        metrics = await acme_client.get_metrics(service, window="15m")
-
-        # 3. Query error logs
-        error_logs = await acme_client.get_logs(service, query="error timeout connection", window="15m")
+        # 2. Query metrics (via MCP or direct client)
+        if settings.USE_MCP:
+            metrics = await mcp_client.get_metrics(service, window="15m")
+            error_logs = await mcp_client.get_service_logs(service, query="error timeout connection", window="15m")
+        else:
+            metrics = await acme_client.get_metrics(service, window="15m")
+            error_logs = await acme_client.get_logs(service, query="error timeout connection", window="15m")
 
         # 4. Query CMDB dependencies
         cmdb = await acme_client.get_cmdb(service)

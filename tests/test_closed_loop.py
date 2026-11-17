@@ -37,6 +37,7 @@ def test_policy_engine_guardrails():
 
 def test_closed_loop_incident_resolution():
     async def _run():
+        acme_client.set_mock_version("checkout-service", "2.4.1")
         state = IncidentState(
             incident_id="TEST-INC-001",
             service="checkout-service",
